@@ -1,5 +1,6 @@
 use crate::protocol::packets::{IncomingTransfer, TransferHeader, TransferStatus};
 use dioxus::prelude::*;
+use sha3::{Digest, Sha3_256};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
@@ -8,13 +9,21 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Mutex, mpsc},
 };
 
 const HEADER_SIZE_LIMIT: usize = 64 * 1024;
 const CHUNK_SIZE: usize = 64 * 1024;
+
+fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) -> [u8; 32] {
+    let mut hasher = Sha3_256::new();
+    hasher.update(filename.as_bytes());
+    hasher.update(file_size.to_le_bytes());
+    hasher.update(sender_name.as_bytes());
+    hasher.finalize().into()
+}
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
 /// Falls back to IPv4-only when IPv6 is unavailable.
@@ -194,6 +203,13 @@ async fn handle_incoming_connection(
     stream.read_exact(&mut header_buf).await?;
     let header: TransferHeader = serde_json::from_slice(&header_buf)?;
 
+    // Verify header checksum before doing anything with the transfer.
+    let expected_header_checksum =
+        compute_header_checksum(&header.filename, header.file_size, &header.sender_name);
+    if expected_header_checksum != header.header_checksum {
+        return Err("Header checksum mismatch".into());
+    }
+
     log::info!(
         "Incoming transfer from {}: {} ({} bytes)",
         header.sender_name,
@@ -314,6 +330,7 @@ async fn receive_file(
     let mut received: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
+    let mut hasher = Sha3_256::new();
 
     loop {
         if received >= total {
@@ -324,6 +341,7 @@ async fn receive_file(
         match stream.read(&mut buf[..to_read]).await {
             Ok(0) => break,
             Ok(n) => {
+                hasher.update(&buf[..n]);
                 if let Err(e) = file.write_all(&buf[..n]).await {
                     let _ = event_tx.send(TransferEvent::Failed {
                         transfer_id,
@@ -354,11 +372,25 @@ async fn receive_file(
             error: "No data received".to_string(),
         });
     } else if received == total {
+        let computed: [u8; 32] = hasher.finalize().into();
+        if computed != header.payload_checksum {
+            log::error!("Transfer {transfer_id}: payload checksum mismatch.");
+            drop(file);
+            let _ = tokio::fs::remove_file(&file_path).await;
+            let _ = event_tx.send(TransferEvent::Failed {
+                transfer_id,
+                error: "Payload checksum mismatch - file corrupted in transit".to_string(),
+            });
+            return;
+        }
         let _ = event_tx.send(TransferEvent::Completed {
             transfer_id,
             save_path: Some(file_path.clone()),
         });
-        log::info!("Transfer {transfer_id} completed: {}", file_path.display());
+        log::info!(
+            "Transfer {transfer_id} completed (checksum OK): {}",
+            file_path.display()
+        );
     } else {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
@@ -410,10 +442,39 @@ pub async fn send_file(
         return;
     }
 
+    let payload_checksum = {
+        let mut hasher = Sha3_256::new();
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            match file.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => hasher.update(&buf[..n]),
+                Err(e) => {
+                    let _ = event_tx.send(TransferEvent::SendFailed {
+                        transfer_id,
+                        error: format!("File read error computing payload checksum: {e}"),
+                    });
+                    return;
+                }
+            }
+        }
+        hasher.finalize().into()
+    };
+
+    if let Err(e) = file.seek(std::io::SeekFrom::Start(0)).await {
+        let _ = event_tx.send(TransferEvent::SendFailed {
+            transfer_id,
+            error: format!("Failed to seek file after computing payload checksum: {e}"),
+        });
+        return;
+    }
+
     let header = TransferHeader {
-        filename,
+        filename: filename.clone(),
         file_size,
-        sender_name,
+        sender_name: sender_name.clone(),
+        header_checksum: compute_header_checksum(&filename, file_size, &sender_name),
+        payload_checksum,
     };
 
     let mut stream = match TcpStream::connect(target_addr).await {

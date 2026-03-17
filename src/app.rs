@@ -7,9 +7,9 @@ use crate::{
     l10n::Language,
     protocol::{
         discovery::{
-            DeviceMap, broadcast_presence, broadcast_presence_v6, create_ipv4_broadcast_socket,
-            create_ipv4_listener_socket, create_ipv6_listener_socket, create_ipv6_sender_socket,
-            listen_for_devices, prune_stale_devices,
+            DeviceMap, broadcast_presence, broadcast_presence_v6, compute_discovery_checksum,
+            create_ipv4_broadcast_socket, create_ipv4_listener_socket, create_ipv6_listener_socket,
+            create_ipv6_sender_socket, listen_for_devices, prune_stale_devices,
         },
         packets::{
             BROADCAST_INTERVAL, DiscoveredDevice, DiscoveryPacket, OutgoingTransfer, TRANSFER_PORT,
@@ -117,6 +117,11 @@ pub fn App() -> Element {
                 device_id: device_id.clone(),
                 device_name: device_name.read().clone(),
                 transfer_port: TRANSFER_PORT,
+                checksum: compute_discovery_checksum(
+                    &device_id,
+                    &device_name.read().clone(),
+                    TRANSFER_PORT,
+                ),
             };
             spawn({
                 let packet = packet.clone();
