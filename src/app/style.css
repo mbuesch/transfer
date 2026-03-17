@@ -193,6 +193,16 @@ body {
     color: #666;
 }
 
+.transfer-path {
+    font-size: 12px;
+    color: #666;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 4px;
+}
+
 .send-btn {
     padding: 10px 40px;
     border: none;

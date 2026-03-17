@@ -234,12 +234,16 @@ pub fn App() -> Element {
                                 };
                             }
                         }
-                        TransferEvent::Completed { transfer_id } => {
+                        TransferEvent::Completed {
+                            transfer_id,
+                            save_path,
+                        } => {
                             let mut should_purge = false;
                             {
                                 let mut list = incoming_transfers.write();
                                 if let Some(t) = list.iter_mut().find(|t| t.id == transfer_id) {
                                     t.status = TransferStatus::Completed;
+                                    t.save_path = save_path;
                                     should_purge = true;
                                 }
                             }

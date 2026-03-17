@@ -39,6 +39,7 @@ pub enum TransferEvent {
     },
     Completed {
         transfer_id: u64,
+        save_path: Option<PathBuf>,
     },
     Rejected {
         transfer_id: u64,
@@ -205,6 +206,7 @@ async fn handle_incoming_connection(
         header: header.clone(),
         from_addr: addr,
         status: TransferStatus::Pending,
+        save_path: None,
     };
 
     let _ = event_tx.send(TransferEvent::IncomingRequest(incoming));
@@ -223,6 +225,47 @@ async fn handle_incoming_connection(
     Ok(())
 }
 
+/// Find a non-colliding filename by appending numbers if the file already exists.
+/// If the original file doesn't exist, returns it as-is.
+/// Otherwise, tries filename (1), filename (2), etc. until finding an available name.
+/// Returns an error if unable to find an available name.
+async fn find_available_path(file_path: &PathBuf) -> Result<PathBuf, String> {
+    if tokio::fs::metadata(file_path).await.is_err() {
+        // File doesn't exist, safe to use original path
+        return Ok(file_path.clone());
+    }
+
+    // File exists, need to find an alternative
+    let parent = file_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = file_path.file_name().unwrap();
+    let file_name_str = file_name.to_string_lossy();
+
+    // Split filename into name and extension
+    let (base_name, extension) = if let Some(dot_pos) = file_name_str.rfind('.') {
+        let (name, ext) = file_name_str.split_at(dot_pos);
+        (name.to_string(), ext.to_string())
+    } else {
+        (file_name_str.to_string(), String::new())
+    };
+
+    // Try appending numbers until we find an available name
+    for i in 1..=10000 {
+        let new_name = format!("{base_name} ({i}){extension}");
+        let new_path = parent.join(&new_name);
+
+        if tokio::fs::metadata(&new_path).await.is_err() {
+            return Ok(new_path);
+        }
+    }
+
+    // Unable to find an available filename
+    Err(format!(
+        "Could not find available filename for {file_name_str}. File already exists."
+    ))
+}
+
 async fn receive_file(
     mut stream: TcpStream,
     header: TransferHeader,
@@ -231,6 +274,20 @@ async fn receive_file(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
 ) {
     let file_path = save_path.join(&header.filename);
+
+    // Check if file exists and find an available alternative name if needed
+    let file_path = match find_available_path(&file_path).await {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("Failed to find available path: {e}");
+            let _ = stream.write_all(b"REJECT\n").await;
+            let _ = event_tx.send(TransferEvent::Failed {
+                transfer_id,
+                error: e,
+            });
+            return;
+        }
+    };
 
     let mut file = match tokio::fs::File::create(&file_path).await {
         Ok(f) => f,
@@ -297,8 +354,11 @@ async fn receive_file(
             error: "No data received".to_string(),
         });
     } else if received == total {
-        let _ = event_tx.send(TransferEvent::Completed { transfer_id });
-        log::info!("Transfer {transfer_id} completed: {}", header.filename);
+        let _ = event_tx.send(TransferEvent::Completed {
+            transfer_id,
+            save_path: Some(file_path.clone()),
+        });
+        log::info!("Transfer {transfer_id} completed: {}", file_path.display());
     } else {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,

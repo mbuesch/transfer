@@ -48,6 +48,7 @@ pub struct IncomingTransfer {
     #[allow(dead_code)]
     pub from_addr: SocketAddr,
     pub status: TransferStatus,
+    pub save_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]

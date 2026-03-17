@@ -36,7 +36,27 @@ pub fn IncomingPanel(
                         span { class: "transfer-from", {l.from_label(&t.header.sender_name)} }
                     }
                     div { class: "transfer-right",
-                        div { class: "transfer-status", {render_status(&t.status, l)} }
+                        {
+                            match &t.status {
+                                TransferStatus::Completed => {
+                                    if let Some(path) = &t.save_path {
+                                        rsx! {
+                                            div {
+                                                p { class: "transfer-path", "{path.display()}" }
+                                                div { class: "transfer-status", {render_status(&t.status, l)} }
+                                            }
+                                        }
+                                    } else {
+                                        rsx! {
+                                            div { class: "transfer-status", {render_status(&t.status, l)} }
+                                        }
+                                    }
+                                }
+                                _ => rsx! {
+                                    div { class: "transfer-status", {render_status(&t.status, l)} }
+                                }
+                            }
+                        }
                         {
                             match &t.status {
                                 TransferStatus::Pending => {
