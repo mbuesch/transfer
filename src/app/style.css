@@ -35,10 +35,17 @@ body {
     margin-bottom: 8px;
 }
 
-.lang-select {
+.meta-box {
     position: fixed;
     bottom: 16px;
     left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+}
+
+.lang-select {
     padding: 4px 8px;
     border: 1px solid #1e3a5f;
     border-radius: 6px;
@@ -52,6 +59,11 @@ body {
     background-repeat: no-repeat;
     background-position: right 8px center;
     padding-right: 24px;
+}
+
+.version {
+    font-size: 11px;
+    color: #888;
 }
 
 .lang-select:focus {
