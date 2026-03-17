@@ -1,7 +1,7 @@
 use crate::{
     app::{
         component_langselect::LanguageSelector, component_panel_devices::DevicesPanel,
-        component_panel_incoming::IncomingPanel, component_panel_outgoing::OutgoingPanel, css::CSS,
+        component_panel_incoming::IncomingPanel, component_panel_outgoing::OutgoingPanel,
     },
     device_name::get_device_name,
     l10n::Language,
@@ -32,7 +32,8 @@ mod component_langselect;
 mod component_panel_devices;
 mod component_panel_incoming;
 mod component_panel_outgoing;
-mod css;
+
+const CSS: &str = include_str!("app/style.css");
 
 const DISPLAY_TIMEOUT: Duration = Duration::from_secs(120);
 
