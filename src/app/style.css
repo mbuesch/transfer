@@ -160,8 +160,7 @@ body {
     border-radius: 10px;
     padding: 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     gap: 12px;
     border: 1px solid #1e3a5f;
 }
@@ -194,8 +193,8 @@ body {
     color: #666;
 }
 
-.send-btn, .accept-btn {
-    padding: 20px 40px;
+.send-btn {
+    padding: 10px 40px;
     border: none;
     border-radius: 6px;
     background: #0f3460;
@@ -204,6 +203,20 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
+    width: 100%;
+}
+
+.accept-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    background: #0f3460;
+    color: #64b5f6;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex: 1;
 }
 
 .send-btn:hover, .accept-btn:hover {
@@ -211,7 +224,7 @@ body {
 }
 
 .reject-btn {
-    padding: 8px 20px;
+    padding: 10px 20px;
     border: none;
     border-radius: 6px;
     background: #3d1a1a;
@@ -220,6 +233,7 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
+    flex: 1;
 }
 
 .reject-btn:hover {
@@ -228,19 +242,18 @@ body {
 
 .transfer-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
 }
 
 .transfer-right {
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
     gap: 8px;
 }
 
 .transfer-status {
-    text-align: right;
+    text-align: left;
 }
 
 .status-pending {
