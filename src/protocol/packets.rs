@@ -9,12 +9,23 @@ pub const TRANSFER_PORT: u16 = 42301;
 pub const BROADCAST_INTERVAL: Duration = Duration::from_secs(1);
 pub const DEVICE_TIMEOUT: Duration = Duration::from_secs(4);
 
+/// Network packet for device discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryPacket {
     pub device_id: String,
     pub device_name: String,
     pub transfer_port: u16,
     pub checksum: [u8; 32],
+}
+
+/// Network packet header for file transfer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferHeader {
+    pub filename: String,
+    pub file_size: u64,
+    pub sender_name: String,
+    pub header_checksum: [u8; 32],
+    pub payload_checksum: [u8; 32],
 }
 
 #[derive(Debug, Clone)]
@@ -24,15 +35,6 @@ pub struct DiscoveredDevice {
     pub addr: SocketAddr,
     pub transfer_port: u16,
     pub last_seen: Instant,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferHeader {
-    pub filename: String,
-    pub file_size: u64,
-    pub sender_name: String,
-    pub header_checksum: [u8; 32],
-    pub payload_checksum: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq)]
