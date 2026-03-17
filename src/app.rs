@@ -101,6 +101,9 @@ pub fn App() -> Element {
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
 
+    // Folder for automatic accepting of incoming files (None = manual accept)
+    let auto_accept_folder: Signal<Option<PathBuf>> = use_signal(|| None);
+
     // Channel for transfer commands (UI -> transfer server)
     let mut cmd_tx = use_signal(|| None);
     // Channel for transfer events (transfer server -> UI)
@@ -223,8 +226,18 @@ pub fn App() -> Element {
                 while let Some(event) = erx.recv().await {
                     match event {
                         TransferEvent::IncomingRequest(t) => {
+                            let transfer_id = t.id;
                             incoming_transfers.write().push(t);
                             active_tab.set(1);
+                            // Auto-accept if an incoming folder has been selected
+                            if let Some(folder) = auto_accept_folder.read().clone() {
+                                if let Some(tx) = cmd_tx.read().as_ref() {
+                                    let _ = tx.send(TransferCommand::AcceptTransfer {
+                                        transfer_id,
+                                        save_path: folder,
+                                    });
+                                }
+                            }
                         }
                         TransferEvent::Progress {
                             transfer_id,
@@ -384,7 +397,7 @@ pub fn App() -> Element {
                         }
                     },
                     1 => rsx! {
-                        IncomingPanel { transfers: incoming_transfers, cmd_tx }
+                        IncomingPanel { transfers: incoming_transfers, cmd_tx, auto_accept_folder }
                     },
                     2 => rsx! {
                         OutgoingPanel { transfers: outgoing_transfers }

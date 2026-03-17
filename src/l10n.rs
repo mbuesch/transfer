@@ -254,4 +254,32 @@ impl Language {
             Language::De => "Senden",
         }
     }
+
+    pub fn auto_accept_folder_label(self) -> &'static str {
+        match self {
+            Language::En => "Auto-accept folder:",
+            Language::De => "Automatischer Empfangsordner:",
+        }
+    }
+
+    pub fn auto_accept_folder_none(self) -> &'static str {
+        match self {
+            Language::En => "Not set (accept manually)",
+            Language::De => "Nicht gesetzt (manuell annehmen)",
+        }
+    }
+
+    pub fn select_auto_accept_folder(self) -> &'static str {
+        match self {
+            Language::En => "Select Folder",
+            Language::De => "Ordner wählen",
+        }
+    }
+
+    pub fn clear_auto_accept_folder(self) -> &'static str {
+        match self {
+            Language::En => "Clear",
+            Language::De => "Entfernen",
+        }
+    }
 }

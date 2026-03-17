@@ -326,3 +326,76 @@ body {
     color: #888;
     text-align: right;
 }
+
+.auto-accept-box {
+    background: #16213e;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    border: 1px solid #1e3a5f;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.auto-accept-label {
+    font-size: 13px;
+    color: #888;
+    font-weight: 500;
+}
+
+.auto-accept-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.auto-accept-path {
+    flex: 1;
+    font-size: 13px;
+    color: #90caf9;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.auto-accept-none {
+    flex: 1;
+    font-size: 13px;
+    color: #555;
+}
+
+.auto-accept-select-btn {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #0f3460;
+    color: #64b5f6;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.auto-accept-select-btn:hover {
+    background: #1a4a7a;
+}
+
+.auto-accept-clear-btn {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 6px;
+    background: #3d1a1a;
+    color: #ef5350;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.auto-accept-clear-btn:hover {
+    background: #5d2a2a;
+}
