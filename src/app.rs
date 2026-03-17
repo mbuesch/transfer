@@ -230,13 +230,13 @@ pub fn App() -> Element {
                             incoming_transfers.write().push(t);
                             active_tab.set(1);
                             // Auto-accept if an incoming folder has been selected
-                            if let Some(folder) = auto_accept_folder.read().clone() {
-                                if let Some(tx) = cmd_tx.read().as_ref() {
-                                    let _ = tx.send(TransferCommand::AcceptTransfer {
-                                        transfer_id,
-                                        save_path: folder,
-                                    });
-                                }
+                            if let Some(folder) = auto_accept_folder.read().clone()
+                                && let Some(tx) = cmd_tx.read().as_ref()
+                            {
+                                let _ = tx.send(TransferCommand::AcceptTransfer {
+                                    transfer_id,
+                                    save_path: folder,
+                                });
                             }
                         }
                         TransferEvent::Progress {
