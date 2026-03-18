@@ -35,10 +35,27 @@ hook_post_archives()
     cd "$checkout_dir"
 
     ./android-build.sh
-    ./desktop-build.sh
+    local android="transfer-android-aarch64-$version"
+    mkdir "./$android"
+    cp "./transfer-release-aarch64-signed.apk" "./$android/"
+    cp "./android-install.sh" "./$android/"
+    tar cJf "./$android.tar.xz" \
+        --numeric-owner --owner=0 --group=0 \
+        --mtime='1970-01-01 00:00Z' \
+        --sort=name \
+        "./$android"
+    cp "./$android.tar.xz" "$archive_dir/"
 
-    cp "$checkout_dir/transfer-release-aarch64-signed.apk" "$archive_dir/"
-    cp "$checkout_dir/transfer-desktop-linux-x64" "$archive_dir/"
+    ./desktop-build.sh
+    local desktop="transfer-desktop-x64-$version"
+    mkdir "./$desktop"
+    cp "./transfer-desktop-linux-x64" "./$desktop/"
+    tar cJf "./$desktop.tar.xz" \
+        --numeric-owner --owner=0 --group=0 \
+        --mtime='1970-01-01 00:00Z' \
+        --sort=name \
+        "./$desktop"
+    cp "./$desktop.tar.xz" "$archive_dir/"
 }
 
 project=transfer
