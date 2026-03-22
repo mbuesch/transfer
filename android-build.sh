@@ -4,6 +4,8 @@ set -e
 basedir="$(realpath "$0" | xargs dirname)"
 cd "$basedir"
 
+export CFLAGS= CXXFLAGS= CPPFLAGS= LDFLAGS= RUSTFLAGS=
+
 dx build --android --target aarch64-linux-android --release
 
 ANDROID_APP="target/dx/transfer/release/android/app/app"
