@@ -42,40 +42,43 @@ const DISPLAY_TIMEOUT: Duration = Duration::from_secs(120);
 fn get_shared_files() -> Vec<PathBuf> {
     (|| -> Option<Vec<PathBuf>> {
         let ctx = ndk_context::android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
-        vm.attach_current_thread(|env| -> Result<Option<Vec<PathBuf>>, jni::errors::Error> {
-            let activity = unsafe { jni::objects::JObject::from_raw(env, ctx.context().cast()) };
-            let class = env.get_object_class(&activity)?;
-            let result = env.call_static_method(
-                &class,
-                jni::jni_str!("getSharedFiles"),
-                jni::jni_sig!("()[Ljava/lang/String;"),
-                &[],
-            )?;
-            let jobj = result.l()?;
-            if jobj.is_null() {
-                return Ok(Some(Vec::new()));
-            }
-            let array =
-                env.cast_local::<jni::objects::JObjectArray<jni::objects::JString>>(jobj)?;
-            let len = array.len(env)?;
-            let mut paths = Vec::new();
-            for i in 0..len {
-                let elem: jni::objects::JString = array.get_element(env, i)?;
-                if !elem.is_null() {
-                    let s = elem.try_to_string(env)?;
-                    paths.push(PathBuf::from(s));
+        let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
+        vm.attach_current_thread(
+            |env| -> Result<Option<Vec<PathBuf>>, ::jni::errors::Error> {
+                let activity =
+                    unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+                let class = env.get_object_class(&activity)?;
+                let result = env.call_static_method(
+                    &class,
+                    ::jni::jni_str!("getSharedFiles"),
+                    ::jni::jni_sig!("()[Ljava/lang/String;"),
+                    &[],
+                )?;
+                let jobj = result.l()?;
+                if jobj.is_null() {
+                    return Ok(Some(Vec::new()));
                 }
-            }
-            // Clear the shared files after retrieval
-            let _ = env.call_static_method(
-                &class,
-                jni::jni_str!("clearSharedFiles"),
-                jni::jni_sig!("()V"),
-                &[],
-            );
-            Ok(Some(paths))
-        })
+                let array =
+                    env.cast_local::<::jni::objects::JObjectArray<::jni::objects::JString>>(jobj)?;
+                let len = array.len(env)?;
+                let mut paths = Vec::new();
+                for i in 0..len {
+                    let elem: ::jni::objects::JString = array.get_element(env, i)?;
+                    if !elem.is_null() {
+                        let s = elem.try_to_string(env)?;
+                        paths.push(PathBuf::from(s));
+                    }
+                }
+                // Clear the shared files after retrieval
+                let _ = env.call_static_method(
+                    &class,
+                    ::jni::jni_str!("clearSharedFiles"),
+                    ::jni::jni_sig!("()V"),
+                    &[],
+                );
+                Ok(Some(paths))
+            },
+        )
         .ok()?
     })()
     .unwrap_or_default()
