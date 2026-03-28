@@ -4,18 +4,19 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Arrow right (upper): shaft + arrowhead, centered at y=40 -->
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M21.0938,0 L86.9062,0 Q108,0 108,21.0938 L108,86.9062 Q108,108 86.9062,108 L21.0938,108 Q0,108 0,86.9062 L0,21.0938 Q0,0 21.0938,0 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M20,34 h57 a6,6 0 0 1 0,12 h-57 a6,6 0 0 1 0,-12 z" />
+        android:pathData="M22.7812,35.4375 L70.6641,35.4375 Q76.5703,35.4375 76.5703,41.3438 L76.5703,41.3438 Q76.5703,47.25 70.6641,47.25 L22.7812,47.25 Q16.875,47.25 16.875,41.3438 L16.875,41.3438 Q16.875,35.4375 22.7812,35.4375 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M60,24 L88,40 L60,56 Z" />
-    <!-- Arrow left (lower): shaft + arrowhead, centered at y=68 -->
+        android:pathData="M71.2969,29.5312 L91.125,41.3438 L71.2969,53.1562 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M31,62 h57 a6,6 0 0 1 0,12 h-57 a6,6 0 0 1 0,-12 z" />
+        android:pathData="M37.3359,60.75 L85.2188,60.75 Q91.125,60.75 91.125,66.6562 L91.125,66.6562 Q91.125,72.5625 85.2188,72.5625 L37.3359,72.5625 Q31.4297,72.5625 31.4297,66.6562 L31.4297,66.6562 Q31.4297,60.75 37.3359,60.75 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,52 L20,68 L48,84 Z" />
+        android:pathData="M36.7031,54.8438 L16.875,66.6562 L36.7031,78.4688 Z" />
 </vector>
