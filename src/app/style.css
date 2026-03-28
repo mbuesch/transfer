@@ -12,6 +12,7 @@ body {
 }
 
 .app {
+    position: relative;
     max-width: 480px;
     margin: 0 auto;
     padding: 16px;
@@ -20,6 +21,8 @@ body {
 }
 
 .header {
+    position: relative;
+    z-index: 10;
     text-align: center;
     margin-bottom: 24px;
 }
@@ -32,6 +35,8 @@ body {
 }
 
 .header h1 {
+    position: relative;
+    z-index: 2;
     font-size: 28px;
     color: #64b5f6;
     margin-bottom: 8px;
@@ -45,7 +50,7 @@ body {
     flex-direction: column;
     gap: 4px;
     align-items: flex-start;
-    z-index: -100;
+    z-index: 1;
 }
 
 .lang-select {
@@ -79,11 +84,15 @@ body {
 }
 
 .status {
+    position: relative;
+    z-index: 2;
     font-size: 14px;
     color: #888;
 }
 
 .tabs {
+    position: relative;
+    z-index: 10;
     display: flex;
     gap: 4px;
     margin-bottom: 20px;
@@ -116,6 +125,8 @@ body {
 }
 
 .content {
+    position: relative;
+    z-index: 10;
     min-height: 400px;
 }
 
