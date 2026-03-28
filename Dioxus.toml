@@ -4,4 +4,14 @@ android_main_activity = "android/MainActivity.kt"
 
 [bundle]
 identifier = "ch.bues.Transfer"
+publisher = "Michael Büsch"
+copyright = "Michael Büsch"
 icon = ["assets/icon.png"]
+#category = ""
+short_description = "File Transfer App"
+long_description = "A minimal, cross‑platform file transfer tool for transferring files on the same local network."
+
+[android]
+min_sdk = 28 # Android 9
+target_sdk = 35 # Android 15
+compile_sdk = 35

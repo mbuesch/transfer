@@ -28,6 +28,8 @@ basedir="$(realpath "$0" | xargs dirname)"
 
 APK_UNSIGNED="transfer-aarch64-unsigned.apk"
 APK_SIGNED="transfer-aarch64.apk"
+AAB_UNSIGNED="transfer-aarch64.aab"
+AAB_SIGNED="transfer-aarch64-signed.aab"
 
 die()
 {
@@ -38,7 +40,10 @@ die()
 cd "$basedir"
 
 if ! [ -r "$APK_UNSIGNED" ]; then
-    die "Error: unsigned APK not found at $APK_UNSIGNED. Please run build-android.sh first."
+    die "Error: unsigned APK not found at $APK_UNSIGNED. Please run android-build.sh first."
+fi
+if ! [ -r "$AAB_UNSIGNED" ]; then
+    die "Error: unsigned AAB not found at $AAB_UNSIGNED. Please run android-build.sh first."
 fi
 if [ -z "$ANDROID_KEYSTORE" ]; then
     ANDROID_KEYSTORE="$basedir/debug.jks"
@@ -80,3 +85,14 @@ apksigner \
     --key-pass pass:"$ANDROID_KEY_PASSWORD" \
     --out "$APK_SIGNED" \
     "$APK_UNSIGNED"
+
+jarsigner \
+    -verbose \
+    -sigalg SHA256withRSA \
+    -digestalg SHA-256 \
+    -keystore "$ANDROID_KEYSTORE" \
+    -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+    -keypass "$ANDROID_KEY_PASSWORD" \
+    -signedjar "$AAB_SIGNED" \
+    "$AAB_UNSIGNED" \
+    "$ANDROID_KEY_ALIAS"

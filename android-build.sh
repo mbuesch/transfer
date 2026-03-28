@@ -33,7 +33,10 @@ cp android/res/mipmap-xxxhdpi/ic_launcher.webp             "$ANDROID_RES/mipmap-
 (
     cd target/dx/transfer/release/android/app
     ./gradlew packageRelease
+    ./gradlew bundleRelease
 )
 
 cp ./target/dx/transfer/release/android/app/app/build/outputs/apk/release/app-release-unsigned.apk \
    ./transfer-aarch64-unsigned.apk
+cp ./target/dx/transfer/release/android/app/app/build/outputs/bundle/release/app-release.aab \
+   ./transfer-aarch64.aab
