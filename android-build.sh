@@ -33,27 +33,7 @@ cp android/res/mipmap-xxxhdpi/ic_launcher.webp             "$ANDROID_RES/mipmap-
 (
     cd target/dx/transfer/release/android/app
     ./gradlew packageRelease
-
-    # Sign the APK.  A self-signed debug key is sufficient for sideloading;
-    # generate one once at ~/.android/transfer-debug.keystore if it doesn't exist.
-    KEYSTORE="$HOME/.android/transfer-debug.keystore"
-    if [ ! -f "$KEYSTORE" ]; then
-        mkdir -p "$HOME/.android"
-        keytool -genkeypair -v \
-            -keystore "$KEYSTORE" \
-            -alias transfer-debug \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=Transfer Debug, O=Transfer, C=US"
-    fi
-    apksigner sign \
-        --ks "$KEYSTORE" \
-        --ks-key-alias transfer-debug \
-        --ks-pass pass:android \
-        --key-pass pass:android \
-        --out app/build/outputs/apk/release/app-release-signed.apk \
-        app/build/outputs/apk/release/app-release-unsigned.apk
 )
 
-cp ./target/dx/transfer/release/android/app/app/build/outputs/apk/release/app-release-signed.apk \
-   ./transfer-release-aarch64-signed.apk
+cp ./target/dx/transfer/release/android/app/app/build/outputs/apk/release/app-release-unsigned.apk \
+   ./transfer-aarch64-unsigned.apk

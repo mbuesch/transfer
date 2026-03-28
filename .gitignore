@@ -1,3 +1,6 @@
 /target/
-/*.apk
+/android-sign-release.sh
 /transfer-desktop-linux-x64
+*.apk
+*.jks
+*.idsig
