@@ -43,4 +43,4 @@ Use the provided scripts to build and install on a connected device:
 
 This application is AI generated with manual modifications.
 
-Licensed under the Apache License version 2.0 or the MIT license, at your option.
+Licensed under the Apache License version 2.0 or alternatively feel free to do whatever you want with this software without restriction.
