@@ -2,7 +2,7 @@
 
 ![img](android/res/mipmap-hdpi/ic_launcher.webp)
 
-A *minimal*, cross‑platform file transfer tool for **Android** and **Desktop** on the same local network.
+A *minimal* and fast cross‑platform file transfer tool for **Android** and **Desktop** on the same local network.
 
 ## Key Features
 
@@ -16,10 +16,10 @@ If you want encryption, consider encrypting files before sending (e.g. encrypted
 
 The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
 
-## Why not use one of the many existing solutions?
+## Why not use one of the many other solutions?
 
-Many existing solutions are either complex, require manual setup or are complicated to use.
-This project aims to provide a simple, user-friendly alternative that works seamlessly across platforms without the need for manual configuration.
+Many other solutions are either very complex, require manual setup, are slow, or are complicated to use.
+This project aims to provide a simple, fast, user-friendly alternative that works seamlessly across platforms without the need for manual configuration.
 
 If you need features other than simple file transfer between two devices, there are many other great apps available that may suit your needs better. This project is focused on simplicity and ease of use for basic file transfers on local networks.
 
@@ -78,6 +78,27 @@ Plug in your Android device, ensure Developer Mode, USB debugging and Sideloadin
 ```sh
 ./android-install.sh
 ```
+
+## Firewall / Ports
+
+If you have a firewall or router that restricts incoming and/or outgoing connections on your network, you may need to allow the application to communicate through the firewall.
+
+Open the following ports (incoming and outgoing) on each device to allow operation on a local network:
+
+- **UDP port 42300** (for discovery): Used for automatic peer discovery.
+  - Allow inbound UDP 42300 to receive discovery packets.
+  - Allow outbound UDP to 42300 for sending broadcasts/multicasts.
+
+- **TCP port 42301** (for file transfer): Used for actual file transfers.
+  - Allow inbound TCP 42301 to receive incoming transfers.
+  - Outbound connections use an ephemeral port on the sender side. Typically, your firewall will already allow that.
+
+Open these ports for IPv4 and/or IPv6 as needed.
+This app can operate on both IPv4 or IPv6 or dual-stack networks.
+
+IPv4 discovery uses broadcast; IPv6 discovery uses link-local multicast.
+Some networks block broadcast or multicast.
+Ensure that these are allowed on your LAN and router if discovery fails.
 
 ## Security Notes
 
