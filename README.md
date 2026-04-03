@@ -108,7 +108,10 @@ Ensure that these are allowed on your LAN and router if discovery fails.
 
 ## Future Plans
 
-- It might be a good idea to add an option for a builtin simple **password based encryption** in the future. No complicated (albeit more secure) public key cryptography, just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
+- Use DH-key exchange to derive a shared secret for transparent symmetric encryption.
+  This would work without any user interaction (important) and would improve security.
+- Additionally, it might be a good idea to add an option for a builtin simple **password based encryption** (mix with the DH-key exchange shared secret).
+  Just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
 - It shall be made possible to **transfer whole directories at once**, not just single files.
   This could be done by using an existing archive format and use that internally (always; also for single files).
 - Make the app available in **Play Store**.
