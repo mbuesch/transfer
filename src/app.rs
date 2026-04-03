@@ -56,12 +56,12 @@ fn get_shared_files() -> Vec<PathBuf> {
                 )?;
                 let jobj = result.l()?;
                 if jobj.is_null() {
-                    return Ok(Some(Vec::new()));
+                    return Ok(Some(vec![]));
                 }
                 let array =
                     env.cast_local::<::jni::objects::JObjectArray<::jni::objects::JString>>(jobj)?;
                 let len = array.len(env)?;
-                let mut paths = Vec::new();
+                let mut paths = vec![];
                 for i in 0..len {
                     let elem: ::jni::objects::JString = array.get_element(env, i)?;
                     if !elem.is_null() {
@@ -86,7 +86,7 @@ fn get_shared_files() -> Vec<PathBuf> {
 
 #[cfg(not(target_os = "android"))]
 fn get_shared_files() -> Vec<PathBuf> {
-    Vec::new()
+    vec![]
 }
 
 #[component]
@@ -156,7 +156,7 @@ pub fn App() -> Element {
 
             // Start discovery listeners (IPv4 + IPv6)
             spawn({
-                let device_map = device_map.clone();
+                let device_map = Arc::clone(&device_map);
                 let device_id = device_id.clone();
                 run_discovery_listener(
                     || async { create_ipv4_listener_socket().await },
@@ -166,7 +166,7 @@ pub fn App() -> Element {
                 )
             });
             spawn({
-                let device_map = device_map.clone();
+                let device_map = Arc::clone(&device_map);
                 let device_id = device_id.clone();
                 run_discovery_listener(
                     || async { create_ipv6_listener_socket() },
@@ -178,7 +178,7 @@ pub fn App() -> Element {
 
             // Periodic device-map sync to UI + pruning
             spawn({
-                let device_map = device_map.clone();
+                let device_map = Arc::clone(&device_map);
                 async move {
                     loop {
                         sleep(Duration::from_secs(1)).await;

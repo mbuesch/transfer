@@ -114,7 +114,7 @@ pub async fn run_transfer_server(
 
     let pending = Arc::new(Mutex::new(HashMap::new()));
 
-    let pending_clone = pending.clone();
+    let pending_clone = Arc::clone(&pending);
     let event_tx_clone = event_tx.clone();
 
     // Spawn acceptor task
@@ -129,7 +129,7 @@ pub async fn run_transfer_server(
                 }
             };
             let event_tx = event_tx_clone.clone();
-            let pending = pending_clone.clone();
+            let pending = Arc::clone(&pending_clone);
 
             let transfer_id = next_id;
             next_id += 1;
@@ -255,7 +255,9 @@ async fn find_available_path(file_path: &PathBuf) -> Result<PathBuf, String> {
     let parent = file_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    let file_name = file_path.file_name().unwrap();
+    let file_name = file_path
+        .file_name()
+        .ok_or_else(|| format!("Invalid file path: {}", file_path.display()))?;
     let file_name_str = file_name.to_string_lossy();
 
     // Split filename into name and extension
