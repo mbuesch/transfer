@@ -6,5 +6,5 @@ cd "$basedir"
 
 dx build --desktop --release
 
-cp ./target/dx/transfer/release/macos/app/transfer \
-   ./transfer-desktop-macos-aarch64
+cp -R ./target/dx/transfer/release/macos/Transfer.app \
+   ./Transfer.app
