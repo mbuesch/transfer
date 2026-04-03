@@ -28,29 +28,54 @@ If you need features other than simple file transfer between two devices, there 
   And typically not usable with the Android share menu.
 - **Bluetooth file transfer**: Built into most devices, but can be slow and unreliable for large files.
 
-## Quick Start
+## Building and installing
+
+### Install Rust
+
+Get and install the latest stable Rust version from [https://rust-lang.org/](https://rust-lang.org/).
 
 ### Desktop (Linux/x86_64)
 
+Build the application for desktop Linux:
+
 ```sh
 ./desktop-build.sh
-./desktop-run.sh
 ```
+
+The built application executable binary is `transfer-desktop-linux-x64`.
+You can run it directly; typically by double-clicking it.
+Or you can put it anywhere you like, e.g. in your home directory or in `/usr/local/bin` for system-wide access.
 
 ### Android
 
-Use the provided scripts to build and install on a connected device:
+Before running the Android build script, ensure you have the Android NDK and SDK installed and properly configured.
+The easiest way to get them is to install [Android Studio](https://developer.android.com/studio), which includes both.
+For the build script to work, you need to set the some environment variables to point to your Android NDK and SDK installations.
+
+```sh
+# Set this to the path of your Android SDK installation.
+export ANDROID_HOME="$HOME/Android/Sdk"
+
+# Set this to the path of your Android NDK installation.
+# Adjust the VERSION part to match the installed NDK version.
+export ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/VERSION"
+
+# Add Android SDK platform-tools to PATH for ADB access.
+export PATH="$HOME/Android/Sdk/platform-tools/:$PATH"
+```
+
+Use the provided script to build the Android packages:
 
 ```sh
 ./android-build.sh
-./android-install.sh
 ```
 
-## Building from Source
+Install the generated APK on your Android device (via ADB).
+Plug in your Android device, ensure Developer Mode, USB debugging and Sideloading are enabled, and run:
 
-1. Install Rust (stable) via `rustup`.
-2. Ensure Android NDK + SDK are installed for Android builds.
-3. Run desktop/Android build script (see **Quick Start**).
+```sh
+./android-install.sh
+```
 
 ## Security Notes
 
