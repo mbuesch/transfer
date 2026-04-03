@@ -1,5 +1,7 @@
 # File Transfer App
 
+![img](android/res/mipmap-hdpi/ic_launcher.webp)
+
 A *minimal*, cross‑platform file transfer tool for **Android** and **Desktop** on the same local network.
 
 ## Key Features
