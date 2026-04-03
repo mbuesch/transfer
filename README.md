@@ -4,12 +4,12 @@ A *minimal*, cross‑platform file transfer tool for **Android** and **Desktop**
 
 ## Key Features
 
-- **Peer discovery** no manual IP entry or QR codes.
-- **Cross‑platform** (Currently: Linux desktop + Android).
+- **Automatic peer discovery**: No manual IP entry or QR codes
+- **Cross‑platform**: Currently: Linux desktop + Android
 - Integrates into the **Android share menu / send menu** for easy file sending.
-  The file transfer app will appear as an option when sharing files from other apps.
+  The file transfer app will appear as an option when sharing files from other apps
 
-Please note that **no encryption** is implemented by design - use only on trusted local networks.
+Please note that currently **no encryption** is implemented by design - use only on trusted local networks.
 If you want encryption, consider encrypting files before sending (e.g. encrypted Zip/7z archives).
 
 The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
@@ -57,6 +57,16 @@ Use the provided scripts to build and install on a connected device:
 - This project deliberately does **not** encrypt traffic.
 - Only run on trusted, private networks (e.g., home LAN).
 - Do **not** expose it directly to the internet.
+
+## Future Plans
+
+- It might be a good idea to add an option for a builtin simple **password based encryption** in the future. No complicated (albeit more secure) public key cryptography, just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
+- It shall be made possible to **transfer whole directories at once**, not just single files.
+  This could be done by using an existing archive format and use that internally (always; also for single files).
+- Make the app available in **Play Store**.
+  I need your help for that.
+  Please get in contact with me, if you are interested in becoming an tester for the app to get it registered in the Play Store.
+- Provide a built **Android APK** for manual installation (sideloading).
 
 ## License
 
