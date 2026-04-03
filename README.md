@@ -12,6 +12,8 @@ A *minimal*, cross‑platform file transfer tool for **Android** and **Desktop**
 Please note that **no encryption** is implemented by design - use only on trusted local networks.
 If you want encryption, consider encrypting files before sending (e.g. encrypted Zip/7z archives).
 
+The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
+
 ## Why not use one of the many existing solutions?
 
 Many existing solutions are either complex, require manual setup or are complicated to use.
