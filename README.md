@@ -1,13 +1,30 @@
 # File Transfer App
 
-A minimal, cross‑platform file transfer tool for **Android - Desktop** (and **Android - Android** / **Desktop - Desktop**) on the same local network.
+A *minimal*, cross‑platform file transfer tool for **Android** and **Desktop** on the same local network.
 
 ## Key Features
 
 - **Peer discovery** no manual IP entry or QR codes.
-- **Cross‑platform** (Linux desktop + Android) built with **Rust + Dioxus**.
-- **Simple UI** focused on fast transfer.
-- **No encryption by design** – use only on trusted local networks.
+- **Cross‑platform** (Currently: Linux desktop + Android).
+- Integrates into the **Android share menu / send menu** for easy file sending.
+  The file transfer app will appear as an option when sharing files from other apps.
+
+Please note that **no encryption** is implemented by design - use only on trusted local networks.
+If you want encryption, consider encrypting files before sending (e.g. encrypted Zip/7z archives).
+
+## Why not use one of the many existing solutions?
+
+Many existing solutions are either complex, require manual setup or are complicated to use.
+This project aims to provide a simple, user-friendly alternative that works seamlessly across platforms without the need for manual configuration.
+
+If you need features other than simple file transfer between two devices, there are many other great apps available that may suit your needs better. This project is focused on simplicity and ease of use for basic file transfers on local networks.
+
+### Alternative solutions include:
+
+- **KDE Connect**: File sharing, remote control, encryption, and much more.
+- **SMB / Windows File Sharing**: Network file sharing protocol, but requires manual setup and is not user-friendly for non-technical users.
+  And typically not usable with the Android share menu.
+- **Bluetooth file transfer**: Built into most devices, but can be slow and unreliable for large files.
 
 ## Quick Start
 
@@ -41,6 +58,6 @@ Use the provided scripts to build and install on a connected device:
 
 ## License
 
-This application is AI generated with manual modifications.
+This application is AI generated with heavy manual modifications.
 
 Licensed under the Apache License version 2.0 or alternatively feel free to do whatever you want with this software without restriction.
