@@ -7,7 +7,7 @@ A *minimal* and fast cross‑platform file transfer tool for **Android** and **D
 ## Key Features
 
 - **Automatic peer discovery**: No manual IP entry or QR codes
-- **Cross‑platform**: Android, Windows desktop, Linux desktop
+- **Cross‑platform**: Android, Windows desktop, Linux desktop, MacOS desktop
 - Integrates into the **Android share menu / send menu** for easy file sending.
   The file transfer app will appear as an option when sharing files from other apps
 
@@ -56,6 +56,14 @@ Build the application for desktop Windows:
 
 Double click on `desktop-build.cmd` to run the build script.
 The built application executable binary is `transfer-desktop-windows-x64.exe`.
+You can run it directly; typically by double-clicking it.
+
+### Desktop (MacOS)
+
+Build the application for desktop MacOS:
+
+Double click on `desktop-build-macos.sh` to run the build script.
+The built application executable binary is `Transfer.app`.
 You can run it directly; typically by double-clicking it.
 
 ### Android
