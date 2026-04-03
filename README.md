@@ -7,7 +7,7 @@ A *minimal* and fast cross‑platform file transfer tool for **Android** and **D
 ## Key Features
 
 - **Automatic peer discovery**: No manual IP entry or QR codes
-- **Cross‑platform**: Currently: Linux desktop + Android
+- **Cross‑platform**: Android, Windows desktop, Linux desktop
 - Integrates into the **Android share menu / send menu** for easy file sending.
   The file transfer app will appear as an option when sharing files from other apps
 
@@ -15,6 +15,8 @@ Please note that currently **no encryption** is implemented by design - use only
 If you want encryption, consider encrypting files before sending (e.g. encrypted Zip/7z archives).
 
 The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
+
+Transfer over the Internet is not supported and will never be supported, as this app is designed for local network file transfers only.
 
 ## Why not use one of the many other solutions?
 
@@ -36,7 +38,7 @@ If you need features other than simple file transfer between two devices, there 
 
 Get and install the latest stable Rust version from [https://rust-lang.org/](https://rust-lang.org/).
 
-### Desktop (Linux/x86_64)
+### Desktop (Linux)
 
 Build the application for desktop Linux:
 
@@ -47,6 +49,14 @@ Build the application for desktop Linux:
 The built application executable binary is `transfer-desktop-linux-x64`.
 You can run it directly; typically by double-clicking it.
 Or you can put it anywhere you like, e.g. in your home directory or in `/usr/local/bin` for system-wide access.
+
+### Desktop (Windows)
+
+Build the application for desktop Windows:
+
+Double click on `desktop-build.cmd` to run the build script.
+The built application executable binary is `transfer-desktop-windows-x64.exe`.
+You can run it directly; typically by double-clicking it.
 
 ### Android
 
@@ -104,11 +114,10 @@ Ensure that these are allowed on your LAN and router if discovery fails.
 
 - This project deliberately does **not** encrypt traffic.
 - Only run on trusted, private networks (e.g., home LAN).
-- Do **not** expose it directly to the internet.
 
 ## Future Plans
 
-- Use DH-key exchange to derive a shared secret for transparent symmetric encryption.
+- Use **DH key exchange** to derive a shared secret for transparent symmetric encryption.
   This would work without any user interaction (important) and would improve security.
 - Additionally, it might be a good idea to add an option for a builtin simple **password based encryption** (mix with the DH-key exchange shared secret).
   Just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
@@ -118,6 +127,8 @@ Ensure that these are allowed on your LAN and router if discovery fails.
   I need your help for that.
   Please get in contact with me, if you are interested in becoming an tester for the app to get it registered in the Play Store.
 - Provide a built **Android APK** for manual installation (sideloading).
+- Desktop: Add the option for this app to be always-on and sit in the **system tray** waiting for new connections and popping-up on new connections.
+  Provide systemd user service files for that.
 
 ## License
 
