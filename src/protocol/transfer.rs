@@ -1,7 +1,7 @@
 use crate::protocol::packets::{IncomingTransfer, TransferHeader, TransferStatus};
 use anyhow::{self as ah, format_err as err};
+use crc_fast::{CrcAlgorithm::Crc64Nvme, Digest as CrcDigest};
 use dioxus::prelude::*;
-use sha3::{Digest, Sha3_256};
 use socket2::{Domain, Protocol, SockRef, Socket, TcpKeepalive, Type};
 use std::{
     collections::HashMap,
@@ -36,12 +36,12 @@ fn configure_keepalive(stream: &TcpStream) {
     }
 }
 
-fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) -> [u8; 32] {
-    let mut hasher = Sha3_256::new();
-    hasher.update(filename.as_bytes());
-    hasher.update(file_size.to_le_bytes());
-    hasher.update(sender_name.as_bytes());
-    hasher.finalize().into()
+fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) -> [u8; 8] {
+    let mut cs = CrcDigest::new(Crc64Nvme);
+    cs.update(filename.as_bytes());
+    cs.update(&file_size.to_le_bytes());
+    cs.update(sender_name.as_bytes());
+    cs.finalize().to_le_bytes()
 }
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
@@ -366,7 +366,7 @@ async fn receive_file(
     let mut received: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
-    let mut hasher = Sha3_256::new();
+    let mut cs = CrcDigest::new(Crc64Nvme);
     loop {
         if received >= total {
             break;
@@ -376,7 +376,7 @@ async fn receive_file(
         match timeout(TRANSFER_TIMEOUT, stream.read(&mut buf[..to_read])).await {
             Ok(Ok(0)) => break,
             Ok(Ok(n)) => {
-                hasher.update(&buf[..n]);
+                cs.update(&buf[..n]);
                 if let Err(e) = file.write_all(&buf[..n]).await {
                     let _ = event_tx.send(TransferEvent::Failed {
                         transfer_id,
@@ -414,7 +414,7 @@ async fn receive_file(
         });
     } else if received == total {
         log::debug!("Verifying payload checksum for transfer {transfer_id}...");
-        let computed: [u8; 32] = hasher.finalize().into();
+        let computed = cs.finalize().to_le_bytes();
         if computed != header.payload_checksum {
             log::error!("Transfer {transfer_id}: payload checksum mismatch.");
             drop(file);
@@ -487,12 +487,12 @@ pub async fn send_file(
 
     log::debug!("Calculating payload checksum for transfer {transfer_id}...");
     let payload_checksum = {
-        let mut hasher = Sha3_256::new();
+        let mut cs = CrcDigest::new(Crc64Nvme);
         let mut buf = vec![0u8; CHUNK_SIZE];
         loop {
             match file.read(&mut buf).await {
                 Ok(0) => break,
-                Ok(n) => hasher.update(&buf[..n]),
+                Ok(n) => cs.update(&buf[..n]),
                 Err(e) => {
                     let _ = event_tx.send(TransferEvent::SendFailed {
                         transfer_id,
@@ -502,7 +502,7 @@ pub async fn send_file(
                 }
             }
         }
-        hasher.finalize().into()
+        cs.finalize().to_le_bytes()
     };
     if let Err(e) = file.seek(std::io::SeekFrom::Start(0)).await {
         let _ = event_tx.send(TransferEvent::SendFailed {

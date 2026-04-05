@@ -59,7 +59,7 @@ pub struct DiscoveryPacket {
     pub device_id: String,
     pub device_name: String,
     pub transfer_port: u16,
-    pub checksum: [u8; 32],
+    pub checksum: [u8; 8],
 }
 
 /// Network packet header for file transfer
@@ -68,8 +68,8 @@ pub struct TransferHeader {
     pub filename: String,
     pub file_size: u64,
     pub sender_name: String,
-    pub header_checksum: [u8; 32],
-    pub payload_checksum: [u8; 32],
+    pub header_checksum: [u8; 8],
+    pub payload_checksum: [u8; 8],
 }
 
 #[derive(Debug, Clone)]

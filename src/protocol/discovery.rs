@@ -2,7 +2,7 @@ use crate::protocol::packets::{
     DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveredDevice, DiscoveryPacket, IpSupport,
 };
 use anyhow as ah;
-use sha3::{Digest, Sha3_256};
+use crc_fast::{CrcAlgorithm::Crc64Nvme, Digest as CrcDigest};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -20,12 +20,12 @@ pub fn compute_discovery_checksum(
     device_id: &str,
     device_name: &str,
     transfer_port: u16,
-) -> [u8; 32] {
-    let mut hasher = Sha3_256::new();
-    hasher.update(device_id.as_bytes());
-    hasher.update(device_name.as_bytes());
-    hasher.update(transfer_port.to_le_bytes());
-    hasher.finalize().into()
+) -> [u8; 8] {
+    let mut cs = CrcDigest::new(Crc64Nvme);
+    cs.update(device_id.as_bytes());
+    cs.update(device_name.as_bytes());
+    cs.update(&transfer_port.to_le_bytes());
+    cs.finalize().to_le_bytes()
 }
 
 fn ipv6_broadcast_if_indices() -> Vec<u32> {
