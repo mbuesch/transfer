@@ -2,21 +2,39 @@ use crate::protocol::packets::{IncomingTransfer, TransferHeader, TransferStatus}
 use anyhow::{self as ah, format_err as err};
 use dioxus::prelude::*;
 use sha3::{Digest, Sha3_256};
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockRef, Socket, TcpKeepalive, Type};
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Mutex, mpsc},
+    time::timeout,
 };
 
 const HEADER_SIZE_LIMIT: usize = 64 * 1024;
 const CHUNK_SIZE: usize = 64 * 1024;
+/// Timeout for a single read/write call during active data transfer.
+/// Triggers when no progress is made for this duration, indicating a stalled connection.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Overall timeout for waiting for a response from the receiver after sending the header.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Enable TCP keepalive so that stalled/dead connections are detected by the OS
+/// rather than hanging indefinitely.
+fn configure_keepalive(stream: &TcpStream) {
+    let keepalive = TcpKeepalive::new()
+        .with_time(Duration::from_secs(15))
+        .with_interval(Duration::from_secs(5));
+    if let Err(e) = SockRef::from(stream).set_tcp_keepalive(&keepalive) {
+        log::warn!("Failed to set TCP keepalive: {e}");
+    }
+}
 
 fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) -> [u8; 32] {
     let mut hasher = Sha3_256::new();
@@ -192,7 +210,11 @@ async fn handle_incoming_connection(
 ) -> ah::Result<()> {
     // Read header length (4 bytes, big-endian)
     let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
+    match timeout(TRANSFER_TIMEOUT, stream.read_exact(&mut len_buf)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(err!("Timeout while reading header length")),
+    }
     let header_len = u32::from_be_bytes(len_buf) as usize;
 
     if header_len > HEADER_SIZE_LIMIT {
@@ -201,7 +223,11 @@ async fn handle_incoming_connection(
 
     // Read header JSON
     let mut header_buf = vec![0u8; header_len];
-    stream.read_exact(&mut header_buf).await?;
+    match timeout(TRANSFER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(err!("Timeout while reading header")),
+    }
     let header: TransferHeader = serde_json::from_slice(&header_buf)?;
 
     // Verify header checksum before doing anything with the transfer.
@@ -330,6 +356,8 @@ async fn receive_file(
         return;
     }
 
+    configure_keepalive(&stream);
+
     let mut received: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
@@ -341,9 +369,9 @@ async fn receive_file(
         }
 
         let to_read = std::cmp::min(CHUNK_SIZE as u64, total - received) as usize;
-        match stream.read(&mut buf[..to_read]).await {
-            Ok(0) => break,
-            Ok(n) => {
+        match timeout(TRANSFER_TIMEOUT, stream.read(&mut buf[..to_read])).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
                 hasher.update(&buf[..n]);
                 if let Err(e) = file.write_all(&buf[..n]).await {
                     let _ = event_tx.send(TransferEvent::Failed {
@@ -359,10 +387,17 @@ async fn receive_file(
                     total,
                 });
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let _ = event_tx.send(TransferEvent::Failed {
                     transfer_id,
                     error: format!("Read error: {e}"),
+                });
+                return;
+            }
+            Err(_elapsed) => {
+                let _ = event_tx.send(TransferEvent::Failed {
+                    transfer_id,
+                    error: "Transfer timed out: no data received".to_string(),
                 });
                 return;
             }
@@ -491,6 +526,8 @@ pub async fn send_file(
         }
     };
 
+    configure_keepalive(&stream);
+
     // Send header
     let header_bytes = match serde_json::to_vec(&header) {
         Ok(b) => b,
@@ -521,12 +558,7 @@ pub async fn send_file(
 
     // Wait for accept/reject response
     let mut response_buf = [0u8; 64];
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        stream.read(&mut response_buf),
-    )
-    .await
-    {
+    match timeout(RESPONSE_TIMEOUT, stream.read(&mut response_buf)).await {
         Ok(Ok(n)) if n > 0 => {
             let response = String::from_utf8_lossy(&response_buf[..n]);
             if response.trim() == "REJECT" {
@@ -570,12 +602,22 @@ pub async fn send_file(
         match file.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                if let Err(e) = stream.write_all(&buf[..n]).await {
-                    let _ = event_tx.send(TransferEvent::SendFailed {
-                        transfer_id,
-                        error: format!("Send error: {e}"),
-                    });
-                    return;
+                match timeout(TRANSFER_TIMEOUT, stream.write_all(&buf[..n])).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        let _ = event_tx.send(TransferEvent::SendFailed {
+                            transfer_id,
+                            error: format!("Send error: {e}"),
+                        });
+                        return;
+                    }
+                    Err(_elapsed) => {
+                        let _ = event_tx.send(TransferEvent::SendFailed {
+                            transfer_id,
+                            error: "Transfer timed out: unable to send data".to_string(),
+                        });
+                        return;
+                    }
                 }
                 sent += n as u64;
                 let _ = event_tx.send(TransferEvent::SendProgress {
