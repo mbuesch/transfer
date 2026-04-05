@@ -1,4 +1,6 @@
-use crate::protocol::packets::{DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveredDevice, DiscoveryPacket};
+use crate::protocol::packets::{
+    DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveredDevice, DiscoveryPacket, IpSupport,
+};
 use anyhow as ah;
 use sha3::{Digest, Sha3_256};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -177,13 +179,23 @@ pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
 
 async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: SocketAddr) {
     let device_addr = match addr {
-        SocketAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
-            *v6.ip(),
-            packet.transfer_port,
-            v6.flowinfo(),
-            v6.scope_id(),
-        )),
-        SocketAddr::V4(_) => SocketAddr::new(addr.ip(), packet.transfer_port),
+        SocketAddr::V6(v6) => {
+            if !IpSupport::ipv6() {
+                return;
+            }
+            SocketAddr::V6(SocketAddrV6::new(
+                *v6.ip(),
+                packet.transfer_port,
+                v6.flowinfo(),
+                v6.scope_id(),
+            ))
+        }
+        SocketAddr::V4(_) => {
+            if !IpSupport::ipv4() {
+                return;
+            }
+            SocketAddr::new(addr.ip(), packet.transfer_port)
+        }
     };
 
     {
@@ -191,7 +203,7 @@ async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: Socke
 
         let mut insert = false;
         if let Some(dev) = map.get_mut(&packet.device_id) {
-            if dev.addr.is_ipv6() && device_addr.is_ipv4() {
+            if dev.addr.is_ipv6() && device_addr.is_ipv4() && IpSupport::ipv4() {
                 // Prefer IPv4 address if we already have an IPv6 one for the same device ID.
                 insert = true;
             } else if dev.addr.is_ipv4() == device_addr.is_ipv4()
