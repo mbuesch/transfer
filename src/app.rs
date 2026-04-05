@@ -18,6 +18,7 @@ use crate::{
         transfer::{TransferCommand, TransferEvent, run_transfer_server, send_file},
     },
 };
+use anyhow as ah;
 use bytesize::ByteSize;
 use dioxus::prelude::*;
 use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
@@ -421,7 +422,7 @@ async fn run_discovery_listener<F, Fut>(
     own_id: String,
 ) where
     F: Fn() -> Fut + Send + 'static,
-    Fut: Future<Output = std::io::Result<UdpSocket>> + Send,
+    Fut: Future<Output = ah::Result<UdpSocket>> + Send,
 {
     let idle_timeout = Duration::from_secs(10);
     loop {
@@ -455,7 +456,7 @@ async fn run_broadcaster<F, Fut, B>(
     interval: Duration,
 ) where
     F: Fn() -> Fut + Send + 'static,
-    Fut: Future<Output = std::io::Result<UdpSocket>> + Send,
+    Fut: Future<Output = ah::Result<UdpSocket>> + Send,
     B: for<'a> FnMut(&'a mut UdpSocket) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>
         + Send
         + 'static,

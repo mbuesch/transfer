@@ -1,4 +1,5 @@
 use crate::protocol::packets::{IncomingTransfer, TransferHeader, TransferStatus};
+use anyhow::{self as ah, format_err as err};
 use dioxus::prelude::*;
 use sha3::{Digest, Sha3_256};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -27,7 +28,7 @@ fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) ->
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
 /// Falls back to IPv4-only when IPv6 is unavailable.
-fn create_tcp_listener(port: u16) -> std::io::Result<std::net::TcpListener> {
+fn create_tcp_listener(port: u16) -> ah::Result<std::net::TcpListener> {
     let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_only_v6(false)?; // Accept IPv4-mapped addresses as well
     sock.set_reuse_address(true)?;
@@ -95,7 +96,7 @@ pub async fn run_transfer_server(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     mut cmd_rx: mpsc::UnboundedReceiver<TransferCommand>,
 ) {
-    let listener = match create_tcp_listener(port).and_then(TcpListener::from_std) {
+    let listener = match create_tcp_listener(port).and_then(|l| Ok(TcpListener::from_std(l)?)) {
         Ok(l) => {
             log::info!("Transfer server listening on [::]:{port} (dual-stack)");
             l
@@ -188,14 +189,14 @@ async fn handle_incoming_connection(
     transfer_id: u64,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     pending: Arc<Mutex<HashMap<u64, PendingIncoming>>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ah::Result<()> {
     // Read header length (4 bytes, big-endian)
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let header_len = u32::from_be_bytes(len_buf) as usize;
 
     if header_len > HEADER_SIZE_LIMIT {
-        return Err("Header too large".into());
+        return Err(err!("Header too large"));
     }
 
     // Read header JSON
@@ -207,7 +208,7 @@ async fn handle_incoming_connection(
     let expected_header_checksum =
         compute_header_checksum(&header.filename, header.file_size, &header.sender_name);
     if expected_header_checksum != header.header_checksum {
-        return Err("Header checksum mismatch".into());
+        return Err(err!("Header checksum mismatch"));
     }
 
     log::info!(
@@ -245,7 +246,7 @@ async fn handle_incoming_connection(
 /// If the original file doesn't exist, returns it as-is.
 /// Otherwise, tries filename (1), filename (2), etc. until finding an available name.
 /// Returns an error if unable to find an available name.
-async fn find_available_path(file_path: &PathBuf) -> Result<PathBuf, String> {
+async fn find_available_path(file_path: &PathBuf) -> ah::Result<PathBuf> {
     if tokio::fs::metadata(file_path).await.is_err() {
         // File doesn't exist, safe to use original path
         return Ok(file_path.clone());
@@ -257,7 +258,7 @@ async fn find_available_path(file_path: &PathBuf) -> Result<PathBuf, String> {
         .unwrap_or_else(|| std::path::Path::new("."));
     let file_name = file_path
         .file_name()
-        .ok_or_else(|| format!("Invalid file path: {}", file_path.display()))?;
+        .ok_or_else(|| err!("Invalid file path: {}", file_path.display()))?;
     let file_name_str = file_name.to_string_lossy();
 
     // Split filename into name and extension
@@ -279,7 +280,7 @@ async fn find_available_path(file_path: &PathBuf) -> Result<PathBuf, String> {
     }
 
     // Unable to find an available filename
-    Err(format!(
+    Err(err!(
         "Could not find available filename for {file_name_str}. File already exists."
     ))
 }
@@ -301,7 +302,7 @@ async fn receive_file(
             let _ = stream.write_all(b"REJECT\n").await;
             let _ = event_tx.send(TransferEvent::Failed {
                 transfer_id,
-                error: e,
+                error: e.to_string(),
             });
             return;
         }

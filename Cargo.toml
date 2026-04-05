@@ -9,6 +9,7 @@ readme = "README.md"
 publish = false
 
 [dependencies]
+anyhow = "1"
 bytesize = "2"
 dioxus = { version = "0.7", features = [ "desktop" ] }
 dirs = "6"

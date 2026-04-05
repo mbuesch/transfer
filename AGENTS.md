@@ -13,6 +13,11 @@
 - Generally avoid `unwrap()`.
 - When unwrapping a lock guard, use `expect("Lock poisoned")` instead of `unwrap()`.
 - Prefer `use` statements to bring crate paths into scope rather than using crate-root paths directly.
+- Prefer `anyhow` for error handling over custom error types or other error handling approaches.
+  Use `use anyhow as ah` or `use anyhow::{self as ah, ...}` to bring `anyhow` into scope.
+  Use `anyhow::format_err` as `err`.
+  Use `return Err(err!("..."))` instead of `bail!("...")` or `return Err(anyhow!("..."))`.
+- At the end of a function to not use `return` for returning a value; just use the value as the last expression.
 - Always run `cargo clippy` after making changes and address warnings; prefer clippy over relying solely on `cargo build`.
 - After changing code, run `cargo fmt` to ensure consistent formatting.
 - After changing Dioxus code, run `dx fmt` to ensure consistent formatting.

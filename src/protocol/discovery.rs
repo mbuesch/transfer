@@ -1,4 +1,5 @@
 use crate::protocol::packets::{DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveredDevice, DiscoveryPacket};
+use anyhow as ah;
 use sha3::{Digest, Sha3_256};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
@@ -43,13 +44,13 @@ fn non_loopback_ipv6_if_indices() -> Vec<u32> {
 
 pub type DeviceMap = Arc<Mutex<HashMap<String, DiscoveredDevice>>>;
 
-pub async fn create_ipv4_broadcast_socket() -> std::io::Result<UdpSocket> {
+pub async fn create_ipv4_broadcast_socket() -> ah::Result<UdpSocket> {
     let socket = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await?;
     socket.set_broadcast(true)?;
     Ok(socket)
 }
 
-pub async fn create_ipv4_listener_socket() -> std::io::Result<UdpSocket> {
+pub async fn create_ipv4_listener_socket() -> ah::Result<UdpSocket> {
     let socket =
         tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))
             .await?;
@@ -57,16 +58,16 @@ pub async fn create_ipv4_listener_socket() -> std::io::Result<UdpSocket> {
     Ok(socket)
 }
 
-pub fn create_ipv6_sender_socket() -> std::io::Result<UdpSocket> {
+pub fn create_ipv6_sender_socket() -> ah::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_only_v6(true)?;
     sock.set_nonblocking(true)?;
     sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into())?;
     let std_sock: std::net::UdpSocket = sock.into();
-    UdpSocket::from_std(std_sock)
+    Ok(UdpSocket::from_std(std_sock)?)
 }
 
-pub fn create_ipv6_listener_socket() -> std::io::Result<UdpSocket> {
+pub fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_only_v6(true)?;
     sock.set_reuse_address(true)?;

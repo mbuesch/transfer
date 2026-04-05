@@ -26,13 +26,18 @@ pub fn IncomingPanel(
             span { class: "auto-accept-label", {l.auto_accept_folder_label()} }
             div { class: "auto-accept-row",
                 {
-                    let folder_display = auto_accept_folder.read().as_ref().map(|p| p.display().to_string());
+                    let folder_display = auto_accept_folder
+                        .read()
+                        .as_ref()
+                        .map(|p| p.display().to_string());
                     if let Some(path_str) = folder_display {
                         rsx! {
                             span { class: "auto-accept-path", "{path_str}" }
                             button {
                                 class: "auto-accept-clear-btn",
-                                onclick: move |_| { auto_accept_folder.set(None); },
+                                onclick: move |_| {
+                                    auto_accept_folder.set(None);
+                                },
                                 {l.clear_auto_accept_folder()}
                             }
                         }
@@ -88,7 +93,7 @@ pub fn IncomingPanel(
                                     }
                                     _ => rsx! {
                                         div { class: "transfer-status", {render_status(&t.status, l)} }
-                                    }
+                                    },
                                 }
                             }
                             {
