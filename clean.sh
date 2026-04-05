@@ -9,4 +9,9 @@ rm -f transfer-desktop-windows-x64.exe
 rm -f transfer-aarch64-unsigned.apk
 rm -f transfer-aarch64.apk
 rm -f transfer-aarch64.apk.idsig
+rm -f transfer-aarch64-release.apk
+rm -f transfer-aarch64-release.apk.idsig
+rm -f transfer-aarch64-unsigned.aab
+rm -f transfer-aarch64.aab
+rm -f transfer-aarch64-release.aab
 #rm -f debug.jks

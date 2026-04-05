@@ -39,4 +39,11 @@ cp android/res/mipmap-xxxhdpi/ic_launcher.webp             "$ANDROID_RES/mipmap-
 cp ./target/dx/transfer/release/android/app/app/build/outputs/apk/release/app-release-unsigned.apk \
    ./transfer-aarch64-unsigned.apk
 cp ./target/dx/transfer/release/android/app/app/build/outputs/bundle/release/app-release.aab \
-   ./transfer-aarch64.aab
+   ./transfer-aarch64-unsigned.aab
+
+./android-sign.sh
+
+echo
+echo "Successfully built Android packages (signed with dev keys):"
+echo "  transfer-aarch64.apk"
+echo "  transfer-aarch64.aab"

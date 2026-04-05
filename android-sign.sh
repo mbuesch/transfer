@@ -26,10 +26,10 @@ set -e
 
 basedir="$(realpath "$0" | xargs dirname)"
 
-APK_UNSIGNED="transfer-aarch64-unsigned.apk"
-APK_SIGNED="transfer-aarch64.apk"
-AAB_UNSIGNED="transfer-aarch64.aab"
-AAB_SIGNED="transfer-aarch64-signed.aab"
+if [ -z "$APK_UNSIGNED" ]; then APK_UNSIGNED="transfer-aarch64-unsigned.apk"; fi
+if [ -z "$APK_SIGNED" ]; then APK_SIGNED="transfer-aarch64.apk"; fi
+if [ -z "$AAB_UNSIGNED" ]; then AAB_UNSIGNED="transfer-aarch64-unsigned.aab"; fi
+if [ -z "$AAB_SIGNED" ]; then AAB_SIGNED="transfer-aarch64.aab"; fi
 
 die()
 {
