@@ -58,7 +58,7 @@ pub async fn create_ipv4_listener_socket() -> ah::Result<UdpSocket> {
     Ok(socket)
 }
 
-pub fn create_ipv6_sender_socket() -> ah::Result<UdpSocket> {
+pub async fn create_ipv6_broadcast_socket() -> ah::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_only_v6(true)?;
     sock.set_nonblocking(true)?;
@@ -67,7 +67,7 @@ pub fn create_ipv6_sender_socket() -> ah::Result<UdpSocket> {
     Ok(UdpSocket::from_std(std_sock)?)
 }
 
-pub fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
+pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_only_v6(true)?;
     sock.set_reuse_address(true)?;
@@ -83,7 +83,7 @@ pub fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     Ok(udp)
 }
 
-pub async fn broadcast_presence(socket: &UdpSocket, packet: &DiscoveryPacket) {
+pub async fn broadcast_presence_ipv4(socket: &UdpSocket, packet: &DiscoveryPacket) {
     let data = match serde_json::to_vec(packet) {
         Ok(d) => d,
         Err(e) => {
@@ -97,7 +97,7 @@ pub async fn broadcast_presence(socket: &UdpSocket, packet: &DiscoveryPacket) {
     }
 }
 
-pub async fn broadcast_presence_v6(socket: &UdpSocket, packet: &DiscoveryPacket) {
+pub async fn broadcast_presence_ipv6(socket: &UdpSocket, packet: &DiscoveryPacket) {
     let data = match serde_json::to_vec(packet) {
         Ok(d) => d,
         Err(e) => {

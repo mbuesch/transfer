@@ -7,13 +7,14 @@ use crate::{
     l10n::Language,
     protocol::{
         discovery::{
-            DeviceMap, broadcast_presence, broadcast_presence_v6, compute_discovery_checksum,
-            create_ipv4_broadcast_socket, create_ipv4_listener_socket, create_ipv6_listener_socket,
-            create_ipv6_sender_socket, listen_for_devices, prune_stale_devices,
+            DeviceMap, broadcast_presence_ipv4, broadcast_presence_ipv6,
+            compute_discovery_checksum, create_ipv4_broadcast_socket, create_ipv4_listener_socket,
+            create_ipv6_broadcast_socket, create_ipv6_listener_socket, listen_for_devices,
+            prune_stale_devices,
         },
         packets::{
-            BROADCAST_INTERVAL, DiscoveredDevice, DiscoveryPacket, OutgoingTransfer, TRANSFER_PORT,
-            TransferStatus,
+            BROADCAST_INTERVAL, DiscoveredDevice, DiscoveryPacket, IpSupport, OutgoingTransfer,
+            TRANSFER_PORT, TransferStatus,
         },
         transfer::{TransferCommand, TransferEvent, run_transfer_server, send_file},
     },
@@ -130,52 +131,60 @@ pub fn App() -> Element {
                     TRANSFER_PORT,
                 ),
             };
-            spawn({
-                let packet = packet.clone();
-                run_broadcaster(
-                    || async { create_ipv4_broadcast_socket().await },
-                    "IPv4",
-                    move |socket| {
-                        let packet = packet.clone();
-                        Box::pin(async move { broadcast_presence(socket, &packet).await })
-                    },
-                    BROADCAST_INTERVAL,
-                )
-            });
-            spawn({
-                let packet = packet.clone();
-                run_broadcaster(
-                    || async { create_ipv6_sender_socket() },
-                    "IPv6",
-                    move |socket| {
-                        let packet = packet.clone();
-                        Box::pin(async move { broadcast_presence_v6(socket, &packet).await })
-                    },
-                    BROADCAST_INTERVAL,
-                )
-            });
+            if IpSupport::ipv4() {
+                spawn({
+                    let packet = packet.clone();
+                    run_broadcaster(
+                        || async { create_ipv4_broadcast_socket().await },
+                        "IPv4",
+                        move |socket| {
+                            let packet = packet.clone();
+                            Box::pin(async move { broadcast_presence_ipv4(socket, &packet).await })
+                        },
+                        BROADCAST_INTERVAL,
+                    )
+                });
+            }
+            if IpSupport::ipv6() {
+                spawn({
+                    let packet = packet.clone();
+                    run_broadcaster(
+                        || async { create_ipv6_broadcast_socket().await },
+                        "IPv6",
+                        move |socket| {
+                            let packet = packet.clone();
+                            Box::pin(async move { broadcast_presence_ipv6(socket, &packet).await })
+                        },
+                        BROADCAST_INTERVAL,
+                    )
+                });
+            }
 
             // Start discovery listeners (IPv4 + IPv6)
-            spawn({
-                let device_map = Arc::clone(&device_map);
-                let device_id = device_id.clone();
-                run_discovery_listener(
-                    || async { create_ipv4_listener_socket().await },
-                    "IPv4",
-                    device_map,
-                    device_id,
-                )
-            });
-            spawn({
-                let device_map = Arc::clone(&device_map);
-                let device_id = device_id.clone();
-                run_discovery_listener(
-                    || async { create_ipv6_listener_socket() },
-                    "IPv6",
-                    device_map,
-                    device_id,
-                )
-            });
+            if IpSupport::ipv4() {
+                spawn({
+                    let device_map = Arc::clone(&device_map);
+                    let device_id = device_id.clone();
+                    run_discovery_listener(
+                        || async { create_ipv4_listener_socket().await },
+                        "IPv4",
+                        device_map,
+                        device_id,
+                    )
+                });
+            }
+            if IpSupport::ipv6() {
+                spawn({
+                    let device_map = Arc::clone(&device_map);
+                    let device_id = device_id.clone();
+                    run_discovery_listener(
+                        || async { create_ipv6_listener_socket().await },
+                        "IPv6",
+                        device_map,
+                        device_id,
+                    )
+                });
+            }
 
             // Periodic device-map sync to UI + pruning
             spawn({

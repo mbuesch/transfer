@@ -14,6 +14,22 @@ mod protocol;
 #[derive(Parser)]
 #[command(version, about = "LAN file transfer tool")]
 struct Args {
+    /// Enable IPv4 support.
+    ///
+    /// By default both --ipv4 and --ipv6 are enabled, unless one of them is explicitly specified.
+    /// Specifying --ipv4 or --ipv6 will disable the other protocol.
+    #[arg(long, short = '4')]
+    #[cfg(feature = "ipv4")]
+    ipv4: bool,
+
+    /// Enable IPv6 support.
+    ///
+    /// By default both --ipv4 and --ipv6 are enabled, unless one of them is explicitly specified.
+    /// Specifying --ipv4 or --ipv6 will disable the other protocol.
+    #[arg(long, short = '6')]
+    #[cfg(feature = "ipv6")]
+    ipv6: bool,
+
     /// Language to use: en, de (default: auto)
     #[arg(long, value_name = "LANG")]
     lang: Option<String>,
@@ -43,7 +59,15 @@ fn main() {
 
     #[cfg(not(target_os = "android"))]
     {
+        use crate::protocol::packets::IpSupport;
+
         let args = Args::parse();
+
+        if args.ipv4 && !args.ipv6 {
+            IpSupport::V4.set();
+        } else if args.ipv6 && !args.ipv4 {
+            IpSupport::V6.set();
+        }
 
         if let Some(lang_str) = args.lang {
             match lang_str.to_lowercase().as_str() {
