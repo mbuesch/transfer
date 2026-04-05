@@ -10,6 +10,8 @@ use std::{
 };
 use tokio::{net::UdpSocket, sync::Mutex};
 
+pub type DeviceMap = Arc<Mutex<HashMap<String, DiscoveredDevice>>>;
+
 const IPV6_MULTICAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x0001);
 
 pub fn compute_discovery_checksum(
@@ -24,17 +26,17 @@ pub fn compute_discovery_checksum(
     hasher.finalize().into()
 }
 
-fn non_loopback_ipv6_if_indices() -> Vec<u32> {
-    let Ok(content) = std::fs::read_to_string("/proc/net/if_inet6") else {
+fn ipv6_broadcast_if_indices() -> Vec<u32> {
+    let Ok(ifaces) = if_addrs::get_if_addrs() else {
         return vec![];
     };
     let mut indices = BTreeSet::new();
-    for line in content.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        // Format: <addr> <if_index_hex> <prefix_len> <scope> <flags> <if_name>
-        if parts.len() >= 6
-            && parts[5] != "lo"
-            && let Ok(idx) = u32::from_str_radix(parts[1], 16)
+    for iface in ifaces {
+        if iface.is_loopback() || iface.is_p2p() || !iface.is_oper_up() {
+            continue;
+        }
+        if let if_addrs::IfAddr::V6(_) = iface.addr
+            && let Some(idx) = iface.index
         {
             indices.insert(idx);
         }
@@ -42,12 +44,25 @@ fn non_loopback_ipv6_if_indices() -> Vec<u32> {
     indices.into_iter().collect()
 }
 
-pub type DeviceMap = Arc<Mutex<HashMap<String, DiscoveredDevice>>>;
-
-pub async fn create_ipv4_broadcast_socket() -> ah::Result<UdpSocket> {
-    let socket = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).await?;
-    socket.set_broadcast(true)?;
-    Ok(socket)
+fn ipv4_broadcast_targets() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    let Ok(ifaces) = if_addrs::get_if_addrs() else {
+        return vec![];
+    };
+    let mut targets = Vec::with_capacity(ifaces.len());
+    for iface in ifaces {
+        if iface.is_loopback() || iface.is_p2p() || !iface.is_oper_up() {
+            continue;
+        }
+        if let if_addrs::IfAddr::V4(v4) = iface.addr {
+            let broadcast = v4.broadcast.unwrap_or_else(|| {
+                let ip = u32::from(v4.ip);
+                let mask = u32::from(v4.netmask);
+                Ipv4Addr::from(ip & mask | !mask)
+            });
+            targets.push((v4.ip, broadcast));
+        }
+    }
+    targets
 }
 
 pub async fn create_ipv4_listener_socket() -> ah::Result<UdpSocket> {
@@ -58,15 +73,6 @@ pub async fn create_ipv4_listener_socket() -> ah::Result<UdpSocket> {
     Ok(socket)
 }
 
-pub async fn create_ipv6_broadcast_socket() -> ah::Result<UdpSocket> {
-    let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-    sock.set_only_v6(true)?;
-    sock.set_nonblocking(true)?;
-    sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into())?;
-    let std_sock: std::net::UdpSocket = sock.into();
-    Ok(UdpSocket::from_std(std_sock)?)
-}
-
 pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_only_v6(true)?;
@@ -75,7 +81,7 @@ pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DISCOVERY_PORT, 0, 0).into())?;
     let std_sock: std::net::UdpSocket = sock.into();
     let udp = UdpSocket::from_std(std_sock)?;
-    for idx in non_loopback_ipv6_if_indices() {
+    for idx in ipv6_broadcast_if_indices() {
         if let Err(e) = udp.join_multicast_v6(&IPV6_MULTICAST_ADDR, idx) {
             log::debug!("Failed to join IPv6 multicast on interface {idx}: {e}");
         }
@@ -83,7 +89,7 @@ pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
     Ok(udp)
 }
 
-pub async fn broadcast_presence_ipv4(socket: &UdpSocket, packet: &DiscoveryPacket) {
+pub async fn broadcast_presence_ipv4(packet: &DiscoveryPacket) {
     let data = match serde_json::to_vec(packet) {
         Ok(d) => d,
         Err(e) => {
@@ -91,21 +97,77 @@ pub async fn broadcast_presence_ipv4(socket: &UdpSocket, packet: &DiscoveryPacke
             return;
         }
     };
-    let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
-    if let Err(e) = socket.send_to(&data, broadcast_addr).await {
-        log::debug!("Broadcast send error (non-fatal): {e}");
+    for (local_ip, broadcast_ip) in ipv4_broadcast_targets() {
+        let sock = match Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)) {
+            Ok(s) => s,
+            Err(e) => {
+                log::debug!("Failed to create IPv4 socket for {local_ip}: {e}");
+                continue;
+            }
+        };
+        if let Err(e) = sock.set_broadcast(true) {
+            log::debug!("Failed to set broadcast on socket for {local_ip}: {e}");
+            continue;
+        }
+        if let Err(e) = sock.set_nonblocking(true) {
+            log::debug!("Failed to set nonblocking on socket for {local_ip}: {e}");
+            continue;
+        }
+        if let Err(e) = sock.bind(&SocketAddrV4::new(local_ip, 0).into()) {
+            log::debug!("Failed to bind IPv4 socket to {local_ip}: {e}");
+            continue;
+        }
+        let std_sock: std::net::UdpSocket = sock.into();
+        let udp = match UdpSocket::from_std(std_sock) {
+            Ok(u) => u,
+            Err(e) => {
+                log::debug!("Failed to convert IPv4 socket for {local_ip}: {e}");
+                continue;
+            }
+        };
+        let dest = SocketAddrV4::new(broadcast_ip, DISCOVERY_PORT);
+        if let Err(e) = udp.send_to(&data, dest).await {
+            log::debug!(
+                "IPv4 broadcast send error on {local_ip} -> {broadcast_ip} (non-fatal): {e}"
+            );
+        }
     }
 }
 
-pub async fn broadcast_presence_ipv6(socket: &UdpSocket, packet: &DiscoveryPacket) {
-    let data = match serde_json::to_vec(packet) {
-        Ok(d) => d,
+pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
+    let Ok(sock) = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)) else {
+        log::debug!("Failed to create IPv6 socket for broadcasting.");
+        return;
+    };
+    if let Err(e) = sock.set_only_v6(true) {
+        log::debug!("Failed to set only_v6 on IPv6 socket for broadcasting: {e}");
+        return;
+    }
+    if let Err(e) = sock.set_nonblocking(true) {
+        log::debug!("Failed to set nonblocking on IPv6 socket for broadcasting: {e}");
+        return;
+    }
+    if let Err(e) = sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into()) {
+        log::debug!("Failed to bind IPv6 socket for broadcasting: {e}");
+        return;
+    }
+    let std_sock: std::net::UdpSocket = sock.into();
+    let socket = match UdpSocket::from_std(std_sock) {
+        Ok(s) => s,
         Err(e) => {
-            log::error!("Failed to serialize IPv6 discovery packet: {e}");
+            log::debug!("Failed to convert IPv6 socket for broadcasting: {e}");
             return;
         }
     };
-    for idx in non_loopback_ipv6_if_indices() {
+
+    let data = match serde_json::to_vec(packet) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Failed to serialize discovery packet: {e}");
+            return;
+        }
+    };
+    for idx in ipv6_broadcast_if_indices() {
         let addr = SocketAddrV6::new(IPV6_MULTICAST_ADDR, DISCOVERY_PORT, 0, idx);
         if let Err(e) = socket.send_to(&data, addr).await {
             log::debug!("IPv6 multicast send error on interface {idx} (non-fatal): {e}");

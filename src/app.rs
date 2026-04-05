@@ -8,9 +8,8 @@ use crate::{
     protocol::{
         discovery::{
             DeviceMap, broadcast_presence_ipv4, broadcast_presence_ipv6,
-            compute_discovery_checksum, create_ipv4_broadcast_socket, create_ipv4_listener_socket,
-            create_ipv6_broadcast_socket, create_ipv6_listener_socket, listen_for_devices,
-            prune_stale_devices,
+            compute_discovery_checksum, create_ipv4_listener_socket, create_ipv6_listener_socket,
+            listen_for_devices, prune_stale_devices,
         },
         packets::{
             BROADCAST_INTERVAL, DiscoveredDevice, DiscoveryPacket, IpSupport, OutgoingTransfer,
@@ -22,7 +21,7 @@ use crate::{
 use anyhow as ah;
 use bytesize::ByteSize;
 use dioxus::prelude::*;
-use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, mpsc},
@@ -134,29 +133,23 @@ pub fn App() -> Element {
             if IpSupport::ipv4() {
                 spawn({
                     let packet = packet.clone();
-                    run_broadcaster(
-                        || async { create_ipv4_broadcast_socket().await },
-                        "IPv4",
-                        move |socket| {
-                            let packet = packet.clone();
-                            Box::pin(async move { broadcast_presence_ipv4(socket, &packet).await })
-                        },
-                        BROADCAST_INTERVAL,
-                    )
+                    async move {
+                        loop {
+                            broadcast_presence_ipv4(&packet).await;
+                            sleep(BROADCAST_INTERVAL).await;
+                        }
+                    }
                 });
             }
             if IpSupport::ipv6() {
                 spawn({
                     let packet = packet.clone();
-                    run_broadcaster(
-                        || async { create_ipv6_broadcast_socket().await },
-                        "IPv6",
-                        move |socket| {
-                            let packet = packet.clone();
-                            Box::pin(async move { broadcast_presence_ipv6(socket, &packet).await })
-                        },
-                        BROADCAST_INTERVAL,
-                    )
+                    async move {
+                        loop {
+                            broadcast_presence_ipv6(&packet).await;
+                            sleep(BROADCAST_INTERVAL).await;
+                        }
+                    }
                 });
             }
 
@@ -452,32 +445,6 @@ async fn run_discovery_listener<F, Fut>(
             },
             Err(e) => {
                 log::warn!("{label} listener unavailable: {e}, retrying in 5s");
-                sleep(Duration::from_secs(5)).await;
-            }
-        }
-    }
-}
-
-async fn run_broadcaster<F, Fut, B>(
-    create_socket: F,
-    label: &'static str,
-    mut broadcaster: B,
-    interval: Duration,
-) where
-    F: Fn() -> Fut + Send + 'static,
-    Fut: Future<Output = ah::Result<UdpSocket>> + Send,
-    B: for<'a> FnMut(&'a mut UdpSocket) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>
-        + Send
-        + 'static,
-{
-    loop {
-        match create_socket().await {
-            Ok(mut socket) => loop {
-                broadcaster(&mut socket).await;
-                sleep(interval).await;
-            },
-            Err(e) => {
-                log::warn!("{label} broadcaster unavailable: {e}, retrying in 5s");
                 sleep(Duration::from_secs(5)).await;
             }
         }
