@@ -6,6 +6,9 @@ use clap::Parser;
 
 mod app;
 mod device_name;
+mod fixedstr;
+mod ip_support;
+mod ipc;
 mod l10n;
 mod pick_file;
 mod protocol;
@@ -59,7 +62,7 @@ fn main() {
 
     #[cfg(not(target_os = "android"))]
     {
-        use crate::protocol::packets::IpSupport;
+        use crate::ip_support::IpSupport;
 
         let args = Args::parse();
 

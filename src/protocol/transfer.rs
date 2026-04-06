@@ -1,8 +1,10 @@
-use crate::protocol::packets::{IncomingTransfer, TransferHeader, TransferStatus};
-use anyhow::{self as ah, format_err as err};
-use crc_fast::{CrcAlgorithm::Crc64Nvme, Digest as CrcDigest};
+use crate::{
+    ipc::{IncomingTransfer, TransferStatus},
+    protocol::packets::{TransferHeader, checksum_new},
+};
+use anyhow::{self as ah, Context as _, format_err as err};
 use dioxus::prelude::*;
-use socket2::{Domain, Protocol, SockRef, Socket, TcpKeepalive, Type};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
@@ -17,49 +19,36 @@ use tokio::{
     time::timeout,
 };
 
-const HEADER_SIZE_LIMIT: usize = 64 * 1024;
+/// Transfer chunk size for reading/writing file data.
 const CHUNK_SIZE: usize = 64 * 1024;
-/// Timeout for a single read/write call during active data transfer.
-/// Triggers when no progress is made for this duration, indicating a stalled connection.
-const TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Timeout for receiving each chunk of data. If no data is received within this period, the transfer is aborted.
+const CHUNK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Timeout for waiting for the header after a connection is established.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Overall timeout for waiting for a response from the receiver after sending the header.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// Enable TCP keepalive so that stalled/dead connections are detected by the OS
-/// rather than hanging indefinitely.
-fn configure_keepalive(stream: &TcpStream) {
-    let keepalive = TcpKeepalive::new()
-        .with_time(Duration::from_secs(15))
-        .with_interval(Duration::from_secs(5));
-    if let Err(e) = SockRef::from(stream).set_tcp_keepalive(&keepalive) {
-        log::warn!("Failed to set TCP keepalive: {e}");
-    }
-}
-
-fn compute_header_checksum(filename: &str, file_size: u64, sender_name: &str) -> [u8; 8] {
-    let mut cs = CrcDigest::new(Crc64Nvme);
-    cs.update(filename.as_bytes());
-    cs.update(&file_size.to_le_bytes());
-    cs.update(sender_name.as_bytes());
-    cs.finalize().to_le_bytes()
-}
+/// Accept response.
+const ACCEPT: [u8; 2] = [0x11, 0x11 ^ 0xFF];
+/// Reject response.
+const REJECT: [u8; 2] = [0x22, 0x22 ^ 0xFF];
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
-/// Falls back to IPv4-only when IPv6 is unavailable.
-fn create_tcp_listener(port: u16) -> ah::Result<std::net::TcpListener> {
+fn create_tcp_listener(port: u16) -> ah::Result<TcpListener> {
     let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_only_v6(false)?; // Accept IPv4-mapped addresses as well
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
     sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
     sock.listen(128)?;
-    Ok(sock.into())
+    let std_listener: std::net::TcpListener = sock.into();
+    let listener = TcpListener::from_std(std_listener)?;
+    Ok(listener)
 }
 
 /// Events from the transfer server to the UI
 #[derive(Debug, Clone)]
 pub enum TransferEvent {
-    IncomingRequest(IncomingTransfer),
+    IncomingRequest(Box<IncomingTransfer>),
     Progress {
         transfer_id: u64,
         bytes_transferred: u64,
@@ -114,7 +103,7 @@ pub async fn run_transfer_server(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     mut cmd_rx: mpsc::UnboundedReceiver<TransferCommand>,
 ) {
-    let listener = match create_tcp_listener(port).and_then(|l| Ok(TcpListener::from_std(l)?)) {
+    let listener = match create_tcp_listener(port) {
         Ok(l) => {
             log::info!("Transfer server listening on [::]:{port} (dual-stack)");
             l
@@ -174,14 +163,19 @@ pub async fn run_transfer_server(
                 if let Some(incoming) = map.remove(&transfer_id) {
                     let event_tx = event_tx.clone();
                     spawn(async move {
-                        receive_file(
+                        if let Err(e) = receive_file(
                             incoming.stream,
                             incoming.header,
                             transfer_id,
                             save_path,
                             event_tx,
                         )
-                        .await;
+                        .await
+                        {
+                            log::warn!(
+                                "Error during file reception for transfer {transfer_id}: {e}"
+                            );
+                        }
                     });
                 }
             }
@@ -190,7 +184,7 @@ pub async fn run_transfer_server(
                 if let Some(incoming) = map.remove(&transfer_id) {
                     // Send rejection and close
                     let mut stream = incoming.stream;
-                    let _ = stream.write_all(b"REJECT\n").await;
+                    let _ = stream.write_all(&REJECT).await;
                     let _ = stream.shutdown().await;
                     let _ = event_tx.send(TransferEvent::Rejected { transfer_id });
                 }
@@ -208,38 +202,29 @@ async fn handle_incoming_connection(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     pending: Arc<Mutex<HashMap<u64, PendingIncoming>>>,
 ) -> ah::Result<()> {
-    log::debug!("Read header length for incoming transfer {transfer_id}...");
-    let mut len_buf = [0u8; 4];
-    match timeout(TRANSFER_TIMEOUT, stream.read_exact(&mut len_buf)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(e.into()),
-        Err(_) => return Err(err!("Timeout while reading header length")),
-    }
-    let header_len = u32::from_be_bytes(len_buf) as usize;
-    if header_len > HEADER_SIZE_LIMIT {
-        return Err(err!("Header too large"));
-    }
-
     log::debug!("Read header for incoming transfer {transfer_id}...");
-    let mut header_buf = vec![0u8; header_len];
-    match timeout(TRANSFER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
+    let mut header_buf = vec![0u8; TransferHeader::size()];
+    match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => return Err(err!("Timeout while reading header")),
     }
-    let header: TransferHeader = serde_json::from_slice(&header_buf)?;
+    let header = TransferHeader::deserialize(&header_buf)?;
+    let header_filename = header.filename.as_str().context("Decode filename failed")?;
+    let header_sender_name = header
+        .sender_name
+        .as_str()
+        .context("Decode sender name failed")?;
 
     log::debug!("Verifying header checksum for incoming transfer {transfer_id}...");
-    let expected_header_checksum =
-        compute_header_checksum(&header.filename, header.file_size, &header.sender_name);
-    if expected_header_checksum != header.header_checksum {
+    if !header.verify_header_checksum() {
         return Err(err!("Header checksum mismatch"));
     }
 
     log::info!(
         "Incoming transfer from {}: {} ({} bytes)",
-        header.sender_name,
-        header.filename,
+        header_sender_name,
+        header_filename,
         header.file_size
     );
 
@@ -251,7 +236,7 @@ async fn handle_incoming_connection(
         save_path: None,
     };
 
-    let _ = event_tx.send(TransferEvent::IncomingRequest(incoming));
+    let _ = event_tx.send(TransferEvent::IncomingRequest(Box::new(incoming)));
 
     // Store pending connection
     let mut map = pending.lock().await;
@@ -316,23 +301,22 @@ async fn receive_file(
     transfer_id: u64,
     save_path: PathBuf,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
-) {
+) -> ah::Result<()> {
     log::debug!("Preparing to receive file for transfer {transfer_id}...");
-
-    configure_keepalive(&stream);
+    let header_filename = header.filename.as_str().context("Decode filename failed")?;
 
     // Check if file exists and find an available alternative name if needed
-    let file_path = save_path.join(&header.filename);
+    let file_path = save_path.join(header_filename);
     let file_path = match find_available_path(&file_path).await {
         Ok(path) => path,
         Err(e) => {
             log::error!("Failed to find available path: {e}");
-            let _ = stream.write_all(b"REJECT\n").await;
+            let _ = stream.write_all(&REJECT).await;
             let _ = event_tx.send(TransferEvent::Failed {
                 transfer_id,
                 error: e.to_string(),
             });
-            return;
+            return Err(e);
         }
     };
 
@@ -344,36 +328,36 @@ async fn receive_file(
         Ok(f) => f,
         Err(e) => {
             log::error!("Failed to create save file {file_path:?}: {e}");
-            let _ = stream.write_all(b"REJECT\n").await;
+            let _ = stream.write_all(&REJECT).await;
             let _ = event_tx.send(TransferEvent::Failed {
                 transfer_id,
                 error: format!("Failed to create file: {e}"),
             });
-            return;
+            return Err(e.into());
         }
     };
 
     log::debug!("Accepting transfer {transfer_id} and ready to receive data...");
-    if let Err(e) = stream.write_all(b"ACCEPT\n").await {
+    if let Err(e) = stream.write_all(&ACCEPT).await {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
             error: format!("Failed to send accept: {e}"),
         });
-        return;
+        return Err(e.into());
     }
 
     log::debug!("Starting to receive file data for transfer {transfer_id}...");
     let mut received: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
-    let mut cs = CrcDigest::new(Crc64Nvme);
+    let mut cs = checksum_new();
     loop {
         if received >= total {
             break;
         }
 
         let to_read = std::cmp::min(CHUNK_SIZE as u64, total - received) as usize;
-        match timeout(TRANSFER_TIMEOUT, stream.read(&mut buf[..to_read])).await {
+        match timeout(CHUNK_RECEIVE_TIMEOUT, stream.read(&mut buf[..to_read])).await {
             Ok(Ok(0)) => break,
             Ok(Ok(n)) => {
                 cs.update(&buf[..n]);
@@ -382,7 +366,7 @@ async fn receive_file(
                         transfer_id,
                         error: format!("Write error: {e}"),
                     });
-                    return;
+                    return Err(e.into());
                 }
                 received += n as u64;
                 let _ = event_tx.send(TransferEvent::Progress {
@@ -396,14 +380,14 @@ async fn receive_file(
                     transfer_id,
                     error: format!("Read error: {e}"),
                 });
-                return;
+                return Err(e.into());
             }
             Err(_elapsed) => {
                 let _ = event_tx.send(TransferEvent::Failed {
                     transfer_id,
                     error: "Transfer timed out: no data received".to_string(),
                 });
-                return;
+                return Err(err!("Transfer timed out: no data received"));
             }
         }
     }
@@ -423,7 +407,9 @@ async fn receive_file(
                 transfer_id,
                 error: "Payload checksum mismatch - file corrupted in transit".to_string(),
             });
-            return;
+            return Err(err!(
+                "Payload checksum mismatch - file corrupted in transit"
+            ));
         }
         let _ = event_tx.send(TransferEvent::Completed {
             transfer_id,
@@ -439,6 +425,8 @@ async fn receive_file(
             error: format!("Incomplete transfer: received {received} of {total} bytes"),
         });
     }
+
+    Ok(())
 }
 
 pub async fn send_file(
@@ -447,7 +435,7 @@ pub async fn send_file(
     sender_name: String,
     transfer_id: u64,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
-) {
+) -> ah::Result<()> {
     log::debug!(
         "Opening file {:?} for transfer {transfer_id}",
         file_path.display()
@@ -459,7 +447,7 @@ pub async fn send_file(
                 transfer_id,
                 error: format!("Cannot read file metadata: {e}"),
             });
-            return;
+            return Err(e.into());
         }
     };
     let mut file = match tokio::fs::File::open(&file_path).await {
@@ -469,7 +457,7 @@ pub async fn send_file(
                 transfer_id,
                 error: format!("Cannot open file: {e}"),
             });
-            return;
+            return Err(e.into());
         }
     };
     let filename = file_path
@@ -482,12 +470,12 @@ pub async fn send_file(
             transfer_id,
             error: "Cannot send empty file".to_string(),
         });
-        return;
+        return Err(err!("Cannot send empty file"));
     }
 
     log::debug!("Calculating payload checksum for transfer {transfer_id}...");
     let payload_checksum = {
-        let mut cs = CrcDigest::new(Crc64Nvme);
+        let mut cs = checksum_new();
         let mut buf = vec![0u8; CHUNK_SIZE];
         loop {
             match file.read(&mut buf).await {
@@ -498,7 +486,7 @@ pub async fn send_file(
                         transfer_id,
                         error: format!("File read error computing payload checksum: {e}"),
                     });
-                    return;
+                    return Err(e.into());
                 }
             }
         }
@@ -509,7 +497,7 @@ pub async fn send_file(
             transfer_id,
             error: format!("Failed to seek file after computing payload checksum: {e}"),
         });
-        return;
+        return Err(e.into());
     }
 
     log::debug!(
@@ -523,79 +511,72 @@ pub async fn send_file(
                 transfer_id,
                 error: format!("Connection failed: {e}"),
             });
-            return;
+            return Err(e.into());
         }
     };
-    configure_keepalive(&stream);
 
     log::debug!("Sending header for transfer {transfer_id}...");
-    let header = TransferHeader {
-        filename: filename.clone(),
-        file_size,
-        sender_name: sender_name.clone(),
-        header_checksum: compute_header_checksum(&filename, file_size, &sender_name),
-        payload_checksum,
-    };
-    let header_bytes = match serde_json::to_vec(&header) {
+    let header = TransferHeader::new(&filename, file_size, &sender_name, payload_checksum)?;
+    let header_bytes = match header.serialize() {
         Ok(b) => b,
         Err(e) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: format!("Serialization error: {e}"),
             });
-            return;
+            return Err(e);
         }
     };
-    let len_bytes = (header_bytes.len() as u32).to_be_bytes();
-    if let Err(e) = stream.write_all(&len_bytes).await {
-        let _ = event_tx.send(TransferEvent::SendFailed {
-            transfer_id,
-            error: format!("Failed to send header length: {e}"),
-        });
-        return;
-    }
     if let Err(e) = stream.write_all(&header_bytes).await {
         let _ = event_tx.send(TransferEvent::SendFailed {
             transfer_id,
             error: format!("Failed to send header: {e}"),
         });
-        return;
+        return Err(e.into());
     }
 
     log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
-    let mut response_buf = [0u8; 64];
-    match timeout(RESPONSE_TIMEOUT, stream.read(&mut response_buf)).await {
-        Ok(Ok(n)) if n > 0 => {
-            let response = String::from_utf8_lossy(&response_buf[..n]);
-            if response.trim() == "REJECT" {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: "Transfer rejected by receiver".to_string(),
-                });
-                return;
-            }
-            // ACCEPT - proceed
-        }
-        Ok(Ok(_)) => {
+    let mut response_buf = [0u8; 2];
+    match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
+        Ok(Ok(0)) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: "Connection closed before response".to_string(),
             });
-            return;
+            return Err(err!("Connection closed before response"));
+        }
+        Ok(Ok(_)) => {
+            match response_buf {
+                ACCEPT => (), // Proceed with transfer
+                REJECT => {
+                    let _ = event_tx.send(TransferEvent::SendFailed {
+                        transfer_id,
+                        error: "Transfer rejected by receiver".to_string(),
+                    });
+                    return Err(err!("Transfer rejected by receiver"));
+                }
+                _ => {
+                    let _ = event_tx.send(TransferEvent::SendFailed {
+                        transfer_id,
+                        error: "Invalid response from receiver".to_string(),
+                    });
+                    return Err(err!("Invalid response from receiver"));
+                }
+            }
         }
         Ok(Err(e)) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: format!("Error reading response: {e}"),
             });
-            return;
+            return Err(e.into());
         }
         Err(_) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: "Timed out waiting for response".to_string(),
             });
-            return;
+            return Err(err!("Timed out waiting for response"));
         }
     }
 
@@ -607,21 +588,14 @@ pub async fn send_file(
         match file.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                match timeout(TRANSFER_TIMEOUT, stream.write_all(&buf[..n])).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
+                match stream.write_all(&buf[..n]).await {
+                    Ok(()) => {}
+                    Err(e) => {
                         let _ = event_tx.send(TransferEvent::SendFailed {
                             transfer_id,
                             error: format!("Send error: {e}"),
                         });
-                        return;
-                    }
-                    Err(_elapsed) => {
-                        let _ = event_tx.send(TransferEvent::SendFailed {
-                            transfer_id,
-                            error: "Transfer timed out: unable to send data".to_string(),
-                        });
-                        return;
+                        return Err(e.into());
                     }
                 }
                 sent += n as u64;
@@ -636,7 +610,7 @@ pub async fn send_file(
                     transfer_id,
                     error: format!("File read error: {e}"),
                 });
-                return;
+                return Err(e.into());
             }
         }
     }
@@ -644,4 +618,6 @@ pub async fn send_file(
     let _ = stream.shutdown().await;
     let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
     log::info!("File sent successfully: transfer {transfer_id}");
+
+    Ok(())
 }

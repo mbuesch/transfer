@@ -4,17 +4,16 @@ use crate::{
         component_panel_incoming::IncomingPanel, component_panel_outgoing::OutgoingPanel,
     },
     device_name::get_device_name,
+    ip_support::IpSupport,
+    ipc::{DiscoveredDevice, IncomingTransfer, OutgoingTransfer, TransferStatus},
     l10n::Language,
     protocol::{
         discovery::{
             DeviceMap, broadcast_presence_ipv4, broadcast_presence_ipv6,
-            compute_discovery_checksum, create_ipv4_listener_socket, create_ipv6_listener_socket,
-            listen_for_devices, prune_stale_devices,
+            create_ipv4_listener_socket, create_ipv6_listener_socket, listen_for_devices,
+            prune_stale_devices,
         },
-        packets::{
-            BROADCAST_INTERVAL, DiscoveredDevice, DiscoveryPacket, IpSupport, OutgoingTransfer,
-            TRANSFER_PORT, TransferStatus,
-        },
+        packets::{BROADCAST_INTERVAL, DiscoveryPacket, TRANSFER_PORT},
         transfer::{TransferCommand, TransferEvent, run_transfer_server, send_file},
     },
 };
@@ -27,6 +26,7 @@ use tokio::{
     sync::{Mutex, mpsc},
     time::{sleep, timeout},
 };
+use uuid::Uuid;
 
 mod component_banner_sharedfile;
 mod component_langselect;
@@ -94,11 +94,11 @@ fn get_shared_files() -> Vec<PathBuf> {
 pub fn App() -> Element {
     let detected_lang = Language::detect();
     let lang = use_context_provider(|| Signal::new(detected_lang));
-    let device_id = uuid::Uuid::new_v4().to_string();
+    let device_id = Uuid::new_v4();
     let device_name = use_signal(get_device_name);
 
     let mut devices = use_signal(HashMap::new);
-    let mut incoming_transfers = use_signal(Vec::new);
+    let mut incoming_transfers = use_signal(Vec::<IncomingTransfer>::new);
     let mut outgoing_transfers: Signal<Vec<OutgoingTransfer>> = use_signal(Vec::new);
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
     let mut active_tab = use_signal(|| 0_usize);
@@ -115,20 +115,21 @@ pub fn App() -> Element {
 
     // Start background services once
     use_hook({
-        let device_id = device_id.clone();
         move || {
             let device_map = Arc::new(Mutex::new(HashMap::new()));
 
             // Start discovery broadcasters (IPv4 + IPv6)
-            let packet = DiscoveryPacket {
-                device_id: device_id.clone(),
-                device_name: device_name.read().clone(),
-                transfer_port: TRANSFER_PORT,
-                checksum: compute_discovery_checksum(
-                    &device_id,
-                    &device_name.read().clone(),
-                    TRANSFER_PORT,
-                ),
+            let packet = DiscoveryPacket::new(device_id, &device_name.read(), TRANSFER_PORT);
+            if IpSupport::ipv4() {
+                spawn({
+                    let packet = packet.clone();
+                    async move {
+                        loop {
+                            broadcast_presence_ipv4(&packet).await;
+                            sleep(BROADCAST_INTERVAL).await;
+                        }
+                    }
+                });
             };
             if IpSupport::ipv4() {
                 spawn({
@@ -157,7 +158,6 @@ pub fn App() -> Element {
             if IpSupport::ipv4() {
                 spawn({
                     let device_map = Arc::clone(&device_map);
-                    let device_id = device_id.clone();
                     run_discovery_listener(
                         || async { create_ipv4_listener_socket().await },
                         "IPv4",
@@ -169,7 +169,6 @@ pub fn App() -> Element {
             if IpSupport::ipv6() {
                 spawn({
                     let device_map = Arc::clone(&device_map);
-                    let device_id = device_id.clone();
                     run_discovery_listener(
                         || async { create_ipv6_listener_socket().await },
                         "IPv6",
@@ -188,7 +187,7 @@ pub fn App() -> Element {
 
                         prune_stale_devices(&device_map).await;
 
-                        let snapshot: HashMap<String, DiscoveredDevice> =
+                        let snapshot: HashMap<Uuid, DiscoveredDevice> =
                             device_map.lock().await.clone();
                         let count = snapshot.len();
                         devices.set(snapshot);
@@ -233,7 +232,7 @@ pub fn App() -> Element {
                     match event {
                         TransferEvent::IncomingRequest(t) => {
                             let transfer_id = t.id;
-                            incoming_transfers.write().push(t);
+                            incoming_transfers.write().push(*t);
                             active_tab.set(1);
                             // Auto-accept if an incoming folder has been selected
                             if let Some(folder) = auto_accept_folder.read().clone()
@@ -421,7 +420,7 @@ async fn run_discovery_listener<F, Fut>(
     create_socket: F,
     label: &'static str,
     device_map: DeviceMap,
-    own_id: String,
+    own_id: Uuid,
 ) where
     F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = ah::Result<UdpSocket>> + Send,
@@ -432,7 +431,7 @@ async fn run_discovery_listener<F, Fut>(
             Ok(socket) => loop {
                 match timeout(
                     idle_timeout,
-                    listen_for_devices(&socket, &own_id, &device_map),
+                    listen_for_devices(&socket, own_id, &device_map),
                 )
                 .await
                 {

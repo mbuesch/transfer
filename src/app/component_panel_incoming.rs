@@ -1,10 +1,8 @@
 use crate::{
     app::{Language, render_status},
+    ipc::{IncomingTransfer, TransferStatus},
     pick_file::pick_save_folder,
-    protocol::{
-        packets::{IncomingTransfer, TransferStatus},
-        transfer::TransferCommand,
-    },
+    protocol::transfer::TransferCommand,
 };
 use bytesize::ByteSize;
 use dioxus::prelude::*;
@@ -72,7 +70,9 @@ pub fn IncomingPanel(
                         div { class: "transfer-info",
                             span { class: "transfer-filename", "{t.header.filename}" }
                             span { class: "transfer-size", "{ByteSize(t.header.file_size).to_string()}" }
-                            span { class: "transfer-from", {l.from_label(&t.header.sender_name)} }
+                            span { class: "transfer-from",
+                                {l.from_label(&t.header.sender_name.as_str_lossy())}
+                            }
                         }
                         div { class: "transfer-right",
                             {

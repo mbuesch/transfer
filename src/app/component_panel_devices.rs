@@ -1,15 +1,16 @@
 use crate::{
     app::{Language, TransferEvent, component_banner_sharedfile::SharedFileBanner, send_file},
+    ipc::{DiscoveredDevice, OutgoingTransfer, TransferStatus},
     pick_file::pick_file_to_send,
-    protocol::packets::{DiscoveredDevice, OutgoingTransfer, TransferStatus},
 };
 use dioxus::prelude::*;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 #[component]
 pub fn DevicesPanel(
-    devices: Signal<HashMap<String, DiscoveredDevice>>,
+    devices: Signal<HashMap<Uuid, DiscoveredDevice>>,
     event_tx: Signal<Option<mpsc::UnboundedSender<TransferEvent>>>,
     device_name: Signal<String>,
     next_send_id: Signal<u64>,
@@ -32,16 +33,9 @@ pub fn DevicesPanel(
         };
     }
 
-    let dev_list: Vec<(String, String, SocketAddr, u16)> = devs
+    let dev_list: Vec<(Uuid, String, SocketAddr, u16)> = devs
         .values()
-        .map(|d| {
-            (
-                d.device_id.clone(),
-                d.device_name.clone(),
-                d.addr,
-                d.transfer_port,
-            )
-        })
+        .map(|d| (d.device_id, d.device_name.clone(), d.addr, d.transfer_port))
         .collect();
 
     rsx! {
@@ -95,8 +89,10 @@ pub fn DevicesPanel(
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx {
-                                                send_file(addr, path, sender, tid, etx).await;
+                                            if let Some(etx) = etx
+                                                && let Err(e) = send_file(addr, path, sender, tid, etx).await
+                                            {
+                                                log::warn!("Failed to send file: {e}");
                                             }
                                         });
                                     }
@@ -127,8 +123,10 @@ pub fn DevicesPanel(
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx {
-                                                send_file(addr, path, sender, tid, etx).await;
+                                            if let Some(etx) = etx
+                                                && let Err(e) = send_file(addr, path, sender, tid, etx).await
+                                            {
+                                                log::warn!("Failed to send file: {e}");
                                             }
                                         }
                                     });

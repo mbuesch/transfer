@@ -1,8 +1,9 @@
-use crate::protocol::packets::{
-    DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveredDevice, DiscoveryPacket, IpSupport,
+use crate::{
+    ip_support::IpSupport,
+    ipc::DiscoveredDevice,
+    protocol::packets::{DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveryPacket},
 };
-use anyhow as ah;
-use crc_fast::{CrcAlgorithm::Crc64Nvme, Digest as CrcDigest};
+use anyhow::{self as ah, Context as _, format_err as err};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -11,22 +12,11 @@ use std::{
     time::Instant,
 };
 use tokio::{net::UdpSocket, sync::Mutex};
+use uuid::Uuid;
 
-pub type DeviceMap = Arc<Mutex<HashMap<String, DiscoveredDevice>>>;
+pub type DeviceMap = Arc<Mutex<HashMap<Uuid, DiscoveredDevice>>>;
 
-const IPV6_MULTICAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x0001);
-
-pub fn compute_discovery_checksum(
-    device_id: &str,
-    device_name: &str,
-    transfer_port: u16,
-) -> [u8; 8] {
-    let mut cs = CrcDigest::new(Crc64Nvme);
-    cs.update(device_id.as_bytes());
-    cs.update(device_name.as_bytes());
-    cs.update(&transfer_port.to_le_bytes());
-    cs.finalize().to_le_bytes()
-}
+const IPV6_MULTICAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
 fn ipv6_broadcast_if_indices() -> Vec<u32> {
     let Ok(ifaces) = if_addrs::get_if_addrs() else {
@@ -92,7 +82,7 @@ pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
 }
 
 pub async fn broadcast_presence_ipv4(packet: &DiscoveryPacket) {
-    let data = match serde_json::to_vec(packet) {
+    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
@@ -162,7 +152,7 @@ pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
         }
     };
 
-    let data = match serde_json::to_vec(packet) {
+    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
@@ -177,11 +167,17 @@ pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
     }
 }
 
-async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: SocketAddr) {
+async fn update_device(
+    devices: &DeviceMap,
+    packet: DiscoveryPacket,
+    addr: SocketAddr,
+) -> ah::Result<()> {
     let device_addr = match addr {
         SocketAddr::V6(v6) => {
             if !IpSupport::ipv6() {
-                return;
+                return Err(err!(
+                    "Received discovery packet from IPv6 address {addr}, but IPv6 support is disabled"
+                ));
             }
             SocketAddr::V6(SocketAddrV6::new(
                 *v6.ip(),
@@ -192,7 +188,9 @@ async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: Socke
         }
         SocketAddr::V4(_) => {
             if !IpSupport::ipv4() {
-                return;
+                return Err(err!(
+                    "Received discovery packet from IPv4 address {addr}, but IPv4 support is disabled"
+                ));
             }
             SocketAddr::new(addr.ip(), packet.transfer_port)
         }
@@ -202,7 +200,7 @@ async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: Socke
         let mut map = devices.lock().await;
 
         let mut insert = false;
-        if let Some(dev) = map.get_mut(&packet.device_id) {
+        if let Some(dev) = map.get_mut(&packet.device_id()) {
             if dev.addr.is_ipv6() && device_addr.is_ipv4() && IpSupport::ipv4() {
                 // Prefer IPv4 address if we already have an IPv6 one for the same device ID.
                 insert = true;
@@ -217,10 +215,14 @@ async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: Socke
         }
         if insert {
             map.insert(
-                packet.device_id.clone(),
+                packet.device_id(),
                 DiscoveredDevice {
-                    device_id: packet.device_id,
-                    device_name: packet.device_name,
+                    device_id: packet.device_id(),
+                    device_name: packet
+                        .device_name
+                        .as_str()
+                        .context("Device name conversion failed")?
+                        .to_string(),
                     addr: device_addr,
                     transfer_port: packet.transfer_port,
                     last_seen: Instant::now(),
@@ -228,27 +230,30 @@ async fn update_device(devices: &DeviceMap, packet: DiscoveryPacket, addr: Socke
             );
         }
     }
+
+    Ok(())
 }
 
-pub async fn listen_for_devices(socket: &UdpSocket, own_id: &str, devices: &DeviceMap) {
-    let mut buf = [0u8; 4096];
+pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &DeviceMap) {
+    let mut buf = [0u8; DiscoveryPacket::size()];
     match socket.recv_from(&mut buf).await {
         Ok((len, addr)) => {
-            if let Ok(packet) = serde_json::from_slice::<DiscoveryPacket>(&buf[..len])
-                && packet.device_id != own_id
-            {
-                let expected = compute_discovery_checksum(
-                    &packet.device_id,
-                    &packet.device_name,
-                    packet.transfer_port,
-                );
-                if expected != packet.checksum {
-                    log::warn!(
-                        "Discovery packet from {addr} failed checksum verification - discarding"
-                    );
-                    return;
+            match DiscoveryPacket::deserialize(&buf[..len]) {
+                Ok(packet) if packet.device_id() != own_id => {
+                    if !packet.verify_checksum() {
+                        log::warn!(
+                            "Discovery packet from {addr} failed checksum verification - discarding"
+                        );
+                        return;
+                    }
+                    if let Err(e) = update_device(devices, packet, addr).await {
+                        log::debug!("Failed to update device: {e}");
+                    }
                 }
-                update_device(devices, packet, addr).await;
+                Ok(_packet) => (), // Ignore our own discovery packets
+                Err(e) => {
+                    log::debug!("Failed to deserialize discovery packet from {addr}: {e}");
+                }
             }
         }
         Err(e) => {

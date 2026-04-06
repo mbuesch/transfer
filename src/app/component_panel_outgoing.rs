@@ -1,6 +1,6 @@
 use crate::{
     app::{Language, render_status},
-    protocol::packets::OutgoingTransfer,
+    ipc::OutgoingTransfer,
 };
 use bytesize::ByteSize;
 use dioxus::prelude::*;
