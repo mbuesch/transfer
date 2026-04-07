@@ -76,8 +76,7 @@ pub fn DevicesPanel(
                                                 .file_name()
                                                 .map(|n| n.to_string_lossy().to_string())
                                                 .unwrap_or_else(|| "file".to_string());
-                                            let file_size = tokio::fs::metadata(&path)
-                                                .await
+                                            let file_size = std::fs::metadata(&path)
                                                 .map(|m| m.len())
                                                 .unwrap_or(0);
                                             outgoing_transfers
@@ -114,8 +113,7 @@ pub fn DevicesPanel(
                                                 .file_name()
                                                 .map(|n| n.to_string_lossy().to_string())
                                                 .unwrap_or_else(|| "file".to_string());
-                                            let file_size = tokio::fs::metadata(&path)
-                                                .await
+                                            let file_size = std::fs::metadata(&path)
                                                 .map(|m| m.len())
                                                 .unwrap_or(0);
                                             outgoing_transfers
