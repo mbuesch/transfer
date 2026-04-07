@@ -131,17 +131,6 @@ pub fn App() -> Element {
                     }
                 });
             };
-            if IpSupport::ipv4() {
-                spawn({
-                    let packet = packet.clone();
-                    async move {
-                        loop {
-                            broadcast_presence_ipv4(&packet).await;
-                            sleep(BROADCAST_INTERVAL).await;
-                        }
-                    }
-                });
-            }
             if IpSupport::ipv6() {
                 spawn({
                     let packet = packet.clone();
