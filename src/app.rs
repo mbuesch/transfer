@@ -90,6 +90,32 @@ fn get_shared_files() -> Vec<PathBuf> {
     vec![]
 }
 
+#[cfg(target_os = "android")]
+fn get_copy_status() -> Option<String> {
+    (|| -> Option<String> {
+        let ctx = ndk_context::android_context();
+        let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
+        vm.attach_current_thread(|env| -> Result<Option<String>, ::jni::errors::Error> {
+            let activity = unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+            let class = env.get_object_class(&activity)?;
+            let result = env.call_static_method(
+                &class,
+                ::jni::jni_str!("getCopyStatus"),
+                ::jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?;
+            let jobj = result.l()?;
+            if jobj.is_null() {
+                return Ok(None);
+            }
+            let jstr = env.cast_local::<::jni::objects::JString>(jobj)?;
+            let s = jstr.try_to_string(env)?;
+            Ok(Some(s))
+        })
+        .ok()?
+    })()
+}
+
 #[component]
 pub fn App() -> Element {
     let detected_lang = Language::detect();
@@ -196,12 +222,36 @@ pub fn App() -> Element {
                 async move {
                     // Brief delay to let the Java side finish processing the share intent
                     sleep(Duration::from_millis(500)).await;
+                    #[cfg(target_os = "android")]
+                    let mut last_copy_msg: Option<String> = None;
                     loop {
                         let files = tokio::task::spawn_blocking(get_shared_files)
                             .await
                             .unwrap_or_default();
                         if !files.is_empty() {
                             shared_files.set(files);
+                        }
+                        #[cfg(target_os = "android")]
+                        {
+                            let copy_msg = tokio::task::spawn_blocking(get_copy_status)
+                                .await
+                                .unwrap_or(None);
+                            match &copy_msg {
+                                Some(msg) => {
+                                    transfer_step_status.set(Some(msg.clone()));
+                                    last_copy_msg = Some(msg.clone());
+                                }
+                                None => {
+                                    if last_copy_msg.is_some() {
+                                        if transfer_step_status.read().as_deref()
+                                            == last_copy_msg.as_deref()
+                                        {
+                                            transfer_step_status.set(None);
+                                        }
+                                        last_copy_msg = None;
+                                    }
+                                }
+                            }
                         }
                         sleep(Duration::from_secs(1)).await;
                     }

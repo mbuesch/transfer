@@ -60,40 +60,39 @@ class MainActivity : WryActivity() {
 
     private fun handleShareIntent(intent: Intent?) {
         if (intent == null) return
-        when (intent.action) {
+        val uris: List<Uri> = when (intent.action) {
             Intent.ACTION_SEND -> {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(Intent.EXTRA_STREAM)
                 }
-                if (uri != null) {
-                    val path = copyUriToCache(this, uri)
-                    if (path != null) {
-                        synchronized(sharedFiles) {
-                            sharedFiles.add(path)
-                        }
-                    }
-                }
+                listOfNotNull(uri)
             }
             Intent.ACTION_SEND_MULTIPLE -> {
-                val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val list: List<Uri>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
                 }
-                uris?.forEach { uri ->
-                    val path = copyUriToCache(this, uri)
-                    if (path != null) {
-                        synchronized(sharedFiles) {
-                            sharedFiles.add(path)
-                        }
+                list ?: emptyList()
+            }
+            else -> return
+        }
+        if (uris.isEmpty()) return
+        val activity = this
+        Thread {
+            for (uri in uris) {
+                val path = copyUriToCache(activity, uri)
+                if (path != null) {
+                    synchronized(sharedFiles) {
+                        sharedFiles.add(path)
                     }
                 }
             }
-        }
+        }.start()
     }
 
     override fun onDestroy() {
@@ -138,6 +137,8 @@ class MainActivity : WryActivity() {
         @JvmStatic
         var instance: MainActivity? = null
 
+        @Volatile private var copyStatusMessage: String? = null
+
         private val sharedFiles = mutableListOf<String>()
 
         @JvmStatic
@@ -153,6 +154,9 @@ class MainActivity : WryActivity() {
                 sharedFiles.clear()
             }
         }
+
+        @JvmStatic
+        fun getCopyStatus(): String? = copyStatusMessage
 
         @JvmStatic
         fun pickFile(): String? {
@@ -190,6 +194,7 @@ class MainActivity : WryActivity() {
         }
 
         private fun copyUriToCache(activity: Activity, uri: Uri): String? {
+            copyStatusMessage = "Caching file..."
             try {
                 val inputStream = activity.contentResolver.openInputStream(uri)
                     ?: return null
@@ -203,6 +208,8 @@ class MainActivity : WryActivity() {
                 return cacheFile.absolutePath
             } catch (e: Exception) {
                 return null
+            } finally {
+                copyStatusMessage = null
             }
         }
 

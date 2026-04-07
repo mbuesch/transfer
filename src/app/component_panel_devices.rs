@@ -76,19 +76,50 @@ pub fn DevicesPanel(
                                                 .file_name()
                                                 .map(|n| n.to_string_lossy().to_string())
                                                 .unwrap_or_else(|| "file".to_string());
-                                            let file_size = std::fs::metadata(&path)
-                                                .map(|m| m.len())
-                                                .unwrap_or(0);
                                             outgoing_transfers
                                                 .write()
                                                 .push(OutgoingTransfer {
                                                     id: tid,
                                                     filename: filename.clone(),
-                                                    file_size,
+                                                    file_size: 0,
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx {
+                                            let meta_result = std::fs::metadata(&path);
+                                            let can_send = match meta_result {
+                                                Ok(m) if m.len() > 0 => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.file_size = m.len();
+                                                    }
+                                                    true
+                                                }
+                                                Ok(_) => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.status = TransferStatus::Failed(
+                                                            "File is empty".to_string(),
+                                                        );
+                                                    }
+                                                    false
+                                                }
+                                                Err(e) => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.status = TransferStatus::Failed(
+                                                            format!("Cannot read file: {e}"),
+                                                        );
+                                                    }
+                                                    false
+                                                }
+                                            };
+                                            if can_send && let Some(etx) = etx {
                                                 tokio::spawn(async move {
                                                     if let Err(e) = send_file(addr, path, sender, tid, etx)
                                                         .await
@@ -113,19 +144,50 @@ pub fn DevicesPanel(
                                                 .file_name()
                                                 .map(|n| n.to_string_lossy().to_string())
                                                 .unwrap_or_else(|| "file".to_string());
-                                            let file_size = std::fs::metadata(&path)
-                                                .map(|m| m.len())
-                                                .unwrap_or(0);
                                             outgoing_transfers
                                                 .write()
                                                 .push(OutgoingTransfer {
                                                     id: tid,
                                                     filename: filename.clone(),
-                                                    file_size,
+                                                    file_size: 0,
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx {
+                                            let meta_result = std::fs::metadata(&path);
+                                            let can_send = match meta_result {
+                                                Ok(m) if m.len() > 0 => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.file_size = m.len();
+                                                    }
+                                                    true
+                                                }
+                                                Ok(_) => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.status = TransferStatus::Failed(
+                                                            "File is empty".to_string(),
+                                                        );
+                                                    }
+                                                    false
+                                                }
+                                                Err(e) => {
+                                                    let mut list = outgoing_transfers.write();
+                                                    if let Some(t) =
+                                                        list.iter_mut().find(|t| t.id == tid)
+                                                    {
+                                                        t.status = TransferStatus::Failed(
+                                                            format!("Cannot read file: {e}"),
+                                                        );
+                                                    }
+                                                    false
+                                                }
+                                            };
+                                            if can_send && let Some(etx) = etx {
                                                 tokio::spawn(async move {
                                                     if let Err(e) = send_file(addr, path, sender, tid, etx)
                                                         .await

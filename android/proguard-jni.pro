@@ -8,4 +8,5 @@
     public static java.lang.String   pickFolder();
     public static java.lang.String[] getSharedFiles();
     public static void               clearSharedFiles();
+    public static java.lang.String   getCopyStatus();
 }

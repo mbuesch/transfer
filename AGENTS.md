@@ -21,6 +21,7 @@
 - Always run `cargo clippy` after making changes and address warnings; prefer clippy over relying solely on `cargo build`.
 - After changing code, run `cargo fmt` to ensure consistent formatting.
 - After changing Dioxus code, run `dx fmt` to ensure consistent formatting.
+- After changing anything Android/Kotlin/Java related, run `android-build.sh`.
 
 ## Crate versions
 
