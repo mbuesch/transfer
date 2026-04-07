@@ -438,26 +438,25 @@ pub fn App() -> Element {
                 }
             }
             div { class: "content",
-                match *active_tab.read() {
-                    0 => rsx! {
-                        DevicesPanel {
-                            devices,
-                            event_tx: event_tx_holder,
-                            device_name,
-                            next_send_id,
-                            outgoing_transfers,
-                            shared_files,
-                        }
-                    },
-                    1 => rsx! {
-                        IncomingPanel { transfers: incoming_transfers, cmd_tx, auto_accept_folder }
-                    },
-                    2 => rsx! {
-                        OutgoingPanel { transfers: outgoing_transfers }
-                    },
-                    _ => rsx! {
-                        p { "Unknown tab" }
-                    },
+                div { hidden: *active_tab.read() != 0,
+                    DevicesPanel {
+                        devices,
+                        event_tx: event_tx_holder,
+                        device_name,
+                        next_send_id,
+                        outgoing_transfers,
+                        shared_files,
+                    }
+                }
+                div { hidden: *active_tab.read() != 1,
+                    IncomingPanel {
+                        transfers: incoming_transfers,
+                        cmd_tx,
+                        auto_accept_folder,
+                    }
+                }
+                div { hidden: *active_tab.read() != 2,
+                    OutgoingPanel { transfers: outgoing_transfers }
                 }
             }
         }

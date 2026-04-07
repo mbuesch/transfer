@@ -137,6 +137,15 @@ pub fn DevicesPanel(
                                         *id += 1;
                                         current
                                     };
+                                    outgoing_transfers
+                                        .write()
+                                        .push(OutgoingTransfer {
+                                            id: tid,
+                                            filename: String::new(),
+                                            file_size: 0,
+                                            target_device: target_name.clone(),
+                                            status: TransferStatus::Pending,
+                                        });
                                     spawn(async move {
                                         let file = pick_file_to_send(*lang.read()).await;
                                         if let Some(path) = file {
@@ -144,31 +153,26 @@ pub fn DevicesPanel(
                                                 .file_name()
                                                 .map(|n| n.to_string_lossy().to_string())
                                                 .unwrap_or_else(|| "file".to_string());
-                                            outgoing_transfers
-                                                .write()
-                                                .push(OutgoingTransfer {
-                                                    id: tid,
-                                                    filename: filename.clone(),
-                                                    file_size: 0,
-                                                    target_device: target_name.clone(),
-                                                    status: TransferStatus::Pending,
-                                                });
+                                            {
+                                                let mut list = outgoing_transfers.write();
+                                                if let Some(t) =
+                                                    list.iter_mut().find(|t| t.id == tid)
+                                                {
+                                                    t.filename = filename.clone();
+                                                }
+                                            }
                                             let meta_result = std::fs::metadata(&path);
                                             let can_send = match meta_result {
                                                 Ok(m) if m.len() > 0 => {
                                                     let mut list = outgoing_transfers.write();
-                                                    if let Some(t) =
-                                                        list.iter_mut().find(|t| t.id == tid)
-                                                    {
+                                                    if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
                                                         t.file_size = m.len();
                                                     }
                                                     true
                                                 }
                                                 Ok(_) => {
                                                     let mut list = outgoing_transfers.write();
-                                                    if let Some(t) =
-                                                        list.iter_mut().find(|t| t.id == tid)
-                                                    {
+                                                    if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
                                                         t.status = TransferStatus::Failed(
                                                             "File is empty".to_string(),
                                                         );
@@ -177,9 +181,7 @@ pub fn DevicesPanel(
                                                 }
                                                 Err(e) => {
                                                     let mut list = outgoing_transfers.write();
-                                                    if let Some(t) =
-                                                        list.iter_mut().find(|t| t.id == tid)
-                                                    {
+                                                    if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
                                                         t.status = TransferStatus::Failed(
                                                             format!("Cannot read file: {e}"),
                                                         );
@@ -196,6 +198,8 @@ pub fn DevicesPanel(
                                                     }
                                                 });
                                             }
+                                        } else {
+                                            outgoing_transfers.write().retain(|t| t.id != tid);
                                         }
                                     });
                                 }

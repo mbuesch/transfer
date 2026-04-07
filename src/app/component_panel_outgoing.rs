@@ -24,8 +24,12 @@ pub fn OutgoingPanel(transfers: Signal<Vec<OutgoingTransfer>>) -> Element {
             for t in list.iter().rev() {
                 div { class: "transfer-card", key: "{t.id}",
                     div { class: "transfer-info",
-                        span { class: "transfer-filename", "{t.filename}" }
-                        span { class: "transfer-size", "{ByteSize(t.file_size).to_string()}" }
+                        span { class: "transfer-filename",
+                            {if t.filename.is_empty() { "…" } else { t.filename.as_str() }}
+                        }
+                        if t.file_size > 0 {
+                            span { class: "transfer-size", "{ByteSize(t.file_size)}" }
+                        }
                         span { class: "transfer-from", {l.to_label(&t.target_device)} }
                     }
                     div { class: "transfer-status", {render_status(&t.status, l)} }
