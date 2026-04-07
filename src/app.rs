@@ -101,6 +101,7 @@ pub fn App() -> Element {
     let mut incoming_transfers = use_signal(Vec::<IncomingTransfer>::new);
     let mut outgoing_transfers: Signal<Vec<OutgoingTransfer>> = use_signal(Vec::new);
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
+    let mut transfer_step_status: Signal<Option<String>> = use_signal(|| None);
     let mut active_tab = use_signal(|| 0_usize);
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
@@ -260,6 +261,7 @@ pub fn App() -> Element {
                                 }
                             }
                             if should_purge {
+                                transfer_step_status.set(None);
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
                                     incoming_transfers.write().retain(|t| t.id != transfer_id);
@@ -320,6 +322,7 @@ pub fn App() -> Element {
                                     should_purge = true;
                                 }
                             }
+                            transfer_step_status.set(None);
                             if should_purge {
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
@@ -343,6 +346,9 @@ pub fn App() -> Element {
                                 });
                             }
                         }
+                        TransferEvent::StatusUpdate { message, .. } => {
+                            transfer_step_status.set(Some(message));
+                        }
                     }
                 }
             });
@@ -360,6 +366,9 @@ pub fn App() -> Element {
                     LanguageSelector { lang }
                 }
                 p { class: "status", "{status_msg}" }
+            }
+            if let Some(msg) = transfer_step_status.read().as_deref() {
+                small { class: "transfer-step-status", "{msg}" }
             }
             div { class: "tabs",
                 button {

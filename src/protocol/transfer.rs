@@ -78,6 +78,24 @@ pub enum TransferEvent {
         transfer_id: u64,
         error: String,
     },
+    /// A human-readable status update for a single step within a transfer.
+    StatusUpdate {
+        #[allow(dead_code)]
+        transfer_id: u64,
+        message: String,
+    },
+}
+
+/// Helper to emit a `StatusUpdate` event.
+fn send_status(
+    event_tx: &mpsc::UnboundedSender<TransferEvent>,
+    transfer_id: u64,
+    msg: impl Into<String>,
+) {
+    let _ = event_tx.send(TransferEvent::StatusUpdate {
+        transfer_id,
+        message: msg.into(),
+    });
 }
 
 /// Commands from the UI to the transfer server
@@ -204,6 +222,7 @@ async fn handle_incoming_connection(
     pending: Arc<Mutex<HashMap<u64, PendingIncoming>>>,
 ) -> ah::Result<()> {
     log::debug!("Read header for incoming transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Reading header...");
     let mut header_buf = vec![0u8; TransferHeader::size()];
     match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
         Ok(Ok(_)) => {}
@@ -218,6 +237,7 @@ async fn handle_incoming_connection(
         .context("Decode sender name failed")?;
 
     log::debug!("Verifying header checksum for incoming transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Verifying header...");
     if !header.verify_header_checksum() {
         return Err(err!("Header checksum mismatch"));
     }
@@ -304,6 +324,7 @@ async fn receive_file(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
 ) -> ah::Result<()> {
     log::debug!("Preparing to receive file for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Preparing to receive...");
     let header_filename = header.filename.as_str().context("Decode filename failed")?;
 
     // Check if file exists and find an available alternative name if needed
@@ -325,6 +346,7 @@ async fn receive_file(
         "Opening target file {:?} for transfer {transfer_id}",
         file_path.display()
     );
+    send_status(&event_tx, transfer_id, "Opening file...");
     let mut file = match tokio::fs::File::create(&file_path).await {
         Ok(f) => f,
         Err(e) => {
@@ -339,6 +361,7 @@ async fn receive_file(
     };
 
     log::debug!("Accepting transfer {transfer_id} and ready to receive data...");
+    send_status(&event_tx, transfer_id, "Accepting...");
     if let Err(e) = stream.write_all(&ACCEPT).await {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
@@ -348,6 +371,7 @@ async fn receive_file(
     }
 
     log::debug!("Starting to receive file data for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Receiving...");
     let mut received: u64 = 0;
     let mut last_reported: u64 = 0;
     let total = header.file_size;
@@ -403,6 +427,7 @@ async fn receive_file(
         });
     } else if received == total {
         log::debug!("Verifying payload checksum for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, "Verifying checksum...");
         let computed = cs.finalize().to_le_bytes();
         if computed != header.payload_checksum {
             log::error!("Transfer {transfer_id}: payload checksum mismatch.");
@@ -445,6 +470,7 @@ pub async fn send_file(
         "Opening file {:?} for transfer {transfer_id}",
         file_path.display()
     );
+    send_status(&event_tx, transfer_id, "Opening file...");
     let metadata = match tokio::fs::metadata(&file_path).await {
         Ok(m) => m,
         Err(e) => {
@@ -479,6 +505,7 @@ pub async fn send_file(
     }
 
     log::debug!("Calculating payload checksum for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Calculating checksum...");
     let payload_checksum = {
         let mut cs = checksum_new();
         let mut buf = vec![0u8; CHUNK_SIZE];
@@ -509,6 +536,7 @@ pub async fn send_file(
         "Connecting to {} for transfer {transfer_id}...",
         target_addr
     );
+    send_status(&event_tx, transfer_id, "Connecting...");
     let mut stream = match TcpStream::connect(target_addr).await {
         Ok(s) => s,
         Err(e) => {
@@ -521,6 +549,7 @@ pub async fn send_file(
     };
 
     log::debug!("Sending header for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Sending header...");
     let header = TransferHeader::new(&filename, file_size, &sender_name, payload_checksum)?;
     let header_bytes = match header.serialize() {
         Ok(b) => b,
@@ -541,6 +570,7 @@ pub async fn send_file(
     }
 
     log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Waiting for response...");
     let mut response_buf = [0u8; 2];
     match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
         Ok(Ok(0)) => {
@@ -586,6 +616,7 @@ pub async fn send_file(
     }
 
     log::debug!("Starting file transfer for transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, "Sending...");
     let total = metadata.len();
     let mut sent: u64 = 0;
     let mut last_reported: u64 = 0;
