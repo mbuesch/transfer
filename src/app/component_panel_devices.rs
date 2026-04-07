@@ -43,7 +43,7 @@ pub fn DevicesPanel(
             SharedFileBanner { shared_files }
         }
         div { class: "device-list",
-            for (id , name , addr , _port) in dev_list {
+            for (id, name, addr, _port) in dev_list {
                 div { class: "device-card", key: "{id}",
                     div { class: "device-info",
                         span { class: "device-name", "{name}" }
@@ -89,10 +89,14 @@ pub fn DevicesPanel(
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx
-                                                && let Err(e) = send_file(addr, path, sender, tid, etx).await
-                                            {
-                                                log::warn!("Failed to send file: {e}");
+                                            if let Some(etx) = etx {
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = send_file(addr, path, sender, tid, etx)
+                                                        .await
+                                                    {
+                                                        log::warn!("Failed to send file: {e}");
+                                                    }
+                                                });
                                             }
                                         });
                                     }
@@ -123,10 +127,14 @@ pub fn DevicesPanel(
                                                     target_device: target_name.clone(),
                                                     status: TransferStatus::Pending,
                                                 });
-                                            if let Some(etx) = etx
-                                                && let Err(e) = send_file(addr, path, sender, tid, etx).await
-                                            {
-                                                log::warn!("Failed to send file: {e}");
+                                            if let Some(etx) = etx {
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = send_file(addr, path, sender, tid, etx)
+                                                        .await
+                                                    {
+                                                        log::warn!("Failed to send file: {e}");
+                                                    }
+                                                });
                                             }
                                         }
                                     });

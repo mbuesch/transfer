@@ -121,7 +121,7 @@ pub fn App() -> Element {
             // Start discovery broadcasters (IPv4 + IPv6)
             let packet = DiscoveryPacket::new(device_id, &device_name.read(), TRANSFER_PORT);
             if IpSupport::ipv4() {
-                spawn({
+                tokio::spawn({
                     let packet = packet.clone();
                     async move {
                         loop {
@@ -130,9 +130,9 @@ pub fn App() -> Element {
                         }
                     }
                 });
-            };
+            }
             if IpSupport::ipv6() {
-                spawn({
+                tokio::spawn({
                     let packet = packet.clone();
                     async move {
                         loop {
@@ -145,7 +145,7 @@ pub fn App() -> Element {
 
             // Start discovery listeners (IPv4 + IPv6)
             if IpSupport::ipv4() {
-                spawn({
+                tokio::spawn({
                     let device_map = Arc::clone(&device_map);
                     run_discovery_listener(
                         || async { create_ipv4_listener_socket().await },
@@ -156,7 +156,7 @@ pub fn App() -> Element {
                 });
             }
             if IpSupport::ipv6() {
-                spawn({
+                tokio::spawn({
                     let device_map = Arc::clone(&device_map);
                     run_discovery_listener(
                         || async { create_ipv6_listener_socket().await },
@@ -211,7 +211,7 @@ pub fn App() -> Element {
             cmd_tx.write().replace(ctx);
             event_tx_holder.write().replace(etx.clone());
 
-            spawn(async move {
+            tokio::spawn(async move {
                 run_transfer_server(TRANSFER_PORT, etx, crx).await;
             });
 

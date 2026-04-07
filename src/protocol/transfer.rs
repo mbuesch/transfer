@@ -3,7 +3,6 @@ use crate::{
     protocol::packets::{TransferHeader, checksum_new},
 };
 use anyhow::{self as ah, Context as _, format_err as err};
-use dioxus::prelude::*;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
@@ -21,6 +20,8 @@ use tokio::{
 
 /// Transfer chunk size for reading/writing file data.
 const CHUNK_SIZE: usize = 64 * 1024;
+/// Minimum number of bytes between progress event emissions, to reduce UI re-render frequency.
+const PROGRESS_REPORT_INTERVAL: u64 = 512 * 1024;
 /// Timeout for receiving each chunk of data. If no data is received within this period, the transfer is aborted.
 const CHUNK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Timeout for waiting for the header after a connection is established.
@@ -126,7 +127,7 @@ pub async fn run_transfer_server(
     let event_tx_clone = event_tx.clone();
 
     // Spawn acceptor task
-    let accept_handle = spawn(async move {
+    let accept_handle = tokio::spawn(async move {
         let mut next_id: u64 = 1;
         loop {
             let (stream, addr) = match listener.accept().await {
@@ -142,7 +143,7 @@ pub async fn run_transfer_server(
             let transfer_id = next_id;
             next_id += 1;
 
-            spawn(async move {
+            tokio::spawn(async move {
                 if let Err(e) =
                     handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
                 {
@@ -162,7 +163,7 @@ pub async fn run_transfer_server(
                 let mut map = pending.lock().await;
                 if let Some(incoming) = map.remove(&transfer_id) {
                     let event_tx = event_tx.clone();
-                    spawn(async move {
+                    tokio::spawn(async move {
                         if let Err(e) = receive_file(
                             incoming.stream,
                             incoming.header,
@@ -192,7 +193,7 @@ pub async fn run_transfer_server(
         }
     }
 
-    accept_handle.cancel();
+    accept_handle.abort();
 }
 
 async fn handle_incoming_connection(
@@ -348,6 +349,7 @@ async fn receive_file(
 
     log::debug!("Starting to receive file data for transfer {transfer_id}...");
     let mut received: u64 = 0;
+    let mut last_reported: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
     let mut cs = checksum_new();
@@ -369,11 +371,14 @@ async fn receive_file(
                     return Err(e.into());
                 }
                 received += n as u64;
-                let _ = event_tx.send(TransferEvent::Progress {
-                    transfer_id,
-                    bytes_transferred: received,
-                    total,
-                });
+                if received - last_reported >= PROGRESS_REPORT_INTERVAL || received >= total {
+                    last_reported = received;
+                    let _ = event_tx.send(TransferEvent::Progress {
+                        transfer_id,
+                        bytes_transferred: received,
+                        total,
+                    });
+                }
             }
             Ok(Err(e)) => {
                 let _ = event_tx.send(TransferEvent::Failed {
@@ -583,6 +588,7 @@ pub async fn send_file(
     log::debug!("Starting file transfer for transfer {transfer_id}...");
     let total = metadata.len();
     let mut sent: u64 = 0;
+    let mut last_reported: u64 = 0;
     let mut buf = vec![0u8; CHUNK_SIZE];
     loop {
         match file.read(&mut buf).await {
@@ -599,11 +605,14 @@ pub async fn send_file(
                     }
                 }
                 sent += n as u64;
-                let _ = event_tx.send(TransferEvent::SendProgress {
-                    transfer_id,
-                    bytes_sent: sent,
-                    total,
-                });
+                if sent - last_reported >= PROGRESS_REPORT_INTERVAL || sent >= total {
+                    last_reported = sent;
+                    let _ = event_tx.send(TransferEvent::SendProgress {
+                        transfer_id,
+                        bytes_sent: sent,
+                        total,
+                    });
+                }
             }
             Err(e) => {
                 let _ = event_tx.send(TransferEvent::SendFailed {
