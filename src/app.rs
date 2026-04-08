@@ -382,6 +382,7 @@ pub fn App() -> Element {
                             }
                             transfer_step_status.set(None);
                             if should_purge {
+                                active_tab.set(0);
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
                                     outgoing_transfers.write().retain(|t| t.id != transfer_id);
@@ -458,6 +459,7 @@ pub fn App() -> Element {
                         next_send_id,
                         outgoing_transfers,
                         shared_files,
+                        active_tab,
                     }
                 }
                 div { hidden: *active_tab.read() != 1,
