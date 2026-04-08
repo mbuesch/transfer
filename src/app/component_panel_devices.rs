@@ -1,5 +1,8 @@
 use crate::{
-    app::{Language, TransferEvent, component_banner_sharedfile::SharedFileBanner, send_file},
+    app::{
+        ActiveTab, Language, TransferEvent, component_banner_sharedfile::SharedFileBanner,
+        send_file,
+    },
     ipc::{DiscoveredDevice, OutgoingTransfer, TransferStatus},
     pick_file::pick_file_to_send,
 };
@@ -86,7 +89,7 @@ pub fn DevicesPanel(
     next_send_id: Signal<u64>,
     outgoing_transfers: Signal<Vec<OutgoingTransfer>>,
     shared_files: Signal<Vec<PathBuf>>,
-    active_tab: Signal<usize>,
+    active_tab: Signal<ActiveTab>,
 ) -> Element {
     let lang = use_context::<Signal<Language>>();
     let l = *lang.read();
@@ -148,7 +151,7 @@ pub fn DevicesPanel(
                                                         target_device: target_name,
                                                         status: TransferStatus::Pending,
                                                     });
-                                                active_tab.set(2);
+                                                active_tab.set(ActiveTab::Outgoing);
                                                 send_it(etx, addr, path, sender, tid, outgoing_transfers);
                                             }
                                         });
@@ -174,7 +177,7 @@ pub fn DevicesPanel(
                                                         t.filename = filename;
                                                     }
                                                 }
-                                                active_tab.set(2);
+                                                active_tab.set(ActiveTab::Outgoing);
                                                 send_it(etx, addr, path, sender, tid, outgoing_transfers);
                                             }
                                         } else {

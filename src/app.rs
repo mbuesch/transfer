@@ -38,6 +38,14 @@ const CSS: &str = include_str!("app/style.css");
 
 const DISPLAY_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Main UI tab.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ActiveTab {
+    Devices,
+    Incoming,
+    Outgoing,
+}
+
 /// Retrieve file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
 #[cfg(target_os = "android")]
 fn get_shared_files() -> Vec<PathBuf> {
@@ -128,7 +136,7 @@ pub fn App() -> Element {
     let mut outgoing_transfers: Signal<Vec<OutgoingTransfer>> = use_signal(Vec::new);
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
     let mut transfer_step_status: Signal<Option<String>> = use_signal(|| None);
-    let mut active_tab = use_signal(|| 0_usize);
+    let mut active_tab = use_signal(|| ActiveTab::Devices);
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
 
@@ -273,7 +281,7 @@ pub fn App() -> Element {
                         TransferEvent::IncomingRequest(t) => {
                             let transfer_id = t.id;
                             incoming_transfers.write().push(*t);
-                            active_tab.set(1);
+                            active_tab.set(ActiveTab::Incoming);
                             // Auto-accept if an incoming folder has been selected
                             if let Some(folder) = auto_accept_folder.read().clone()
                                 && let Some(tx) = cmd_tx.read().as_ref()
@@ -382,7 +390,7 @@ pub fn App() -> Element {
                             }
                             transfer_step_status.set(None);
                             if should_purge {
-                                active_tab.set(0);
+                                active_tab.set(ActiveTab::Devices);
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
                                     outgoing_transfers.write().retain(|t| t.id != transfer_id);
@@ -435,23 +443,23 @@ pub fn App() -> Element {
             }
             div { class: "tabs",
                 button {
-                    class: if *active_tab.read() == 0 { "tab active" } else { "tab" },
-                    onclick: move |_| active_tab.set(0),
+                    class: if *active_tab.read() == ActiveTab::Devices { "tab active" } else { "tab" },
+                    onclick: move |_| active_tab.set(ActiveTab::Devices),
                     {l.tab_devices()}
                 }
                 button {
-                    class: if *active_tab.read() == 1 { "tab active" } else { "tab" },
-                    onclick: move |_| active_tab.set(1),
+                    class: if *active_tab.read() == ActiveTab::Incoming { "tab active" } else { "tab" },
+                    onclick: move |_| active_tab.set(ActiveTab::Incoming),
                     {l.tab_incoming()}
                 }
                 button {
-                    class: if *active_tab.read() == 2 { "tab active" } else { "tab" },
-                    onclick: move |_| active_tab.set(2),
+                    class: if *active_tab.read() == ActiveTab::Outgoing { "tab active" } else { "tab" },
+                    onclick: move |_| active_tab.set(ActiveTab::Outgoing),
                     {l.tab_outgoing()}
                 }
             }
             div { class: "content",
-                div { hidden: *active_tab.read() != 0,
+                div { hidden: *active_tab.read() != ActiveTab::Devices,
                     DevicesPanel {
                         devices,
                         event_tx: event_tx_holder,
@@ -462,14 +470,14 @@ pub fn App() -> Element {
                         active_tab,
                     }
                 }
-                div { hidden: *active_tab.read() != 1,
+                div { hidden: *active_tab.read() != ActiveTab::Incoming,
                     IncomingPanel {
                         transfers: incoming_transfers,
                         cmd_tx,
                         auto_accept_folder,
                     }
                 }
-                div { hidden: *active_tab.read() != 2,
+                div { hidden: *active_tab.read() != ActiveTab::Outgoing,
                     OutgoingPanel { transfers: outgoing_transfers }
                 }
             }
