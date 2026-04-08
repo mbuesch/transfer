@@ -5,7 +5,10 @@ use crate::{
     },
     device_name::get_device_name,
     ip_support::IpSupport,
-    ipc::{DiscoveredDevice, IncomingTransfer, OutgoingTransfer, TransferStatus},
+    ipc::{
+        DiscoveredDevice, IncomingTransfer, OutgoingTransfer, TransferCommand, TransferEvent,
+        TransferStatus,
+    },
     l10n::Language,
     protocol::{
         discovery::{
@@ -14,7 +17,7 @@ use crate::{
             prune_stale_devices,
         },
         packets::{BROADCAST_INTERVAL, DiscoveryPacket, TRANSFER_PORT},
-        transfer::{TransferCommand, TransferEvent, run_transfer_server, send_file},
+        transfer::{run_transfer_server, send_file},
     },
 };
 use anyhow as ah;
@@ -338,7 +341,7 @@ pub fn App() -> Element {
                             }
                         }
                         TransferEvent::StatusUpdate { message, .. } => {
-                            transfer_step_status.set(Some(message));
+                            transfer_step_status.set(message);
                         }
                     }
                 }

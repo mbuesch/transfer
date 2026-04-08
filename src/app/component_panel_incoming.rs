@@ -1,8 +1,7 @@
 use crate::{
     app::{Language, render_status},
-    ipc::{IncomingTransfer, TransferStatus},
+    ipc::{IncomingTransfer, TransferCommand, TransferStatus},
     pick_file::pick_save_folder,
-    protocol::transfer::TransferCommand,
 };
 use bytesize::ByteSize;
 use dioxus::prelude::*;
