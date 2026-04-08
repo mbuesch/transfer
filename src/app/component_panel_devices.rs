@@ -69,7 +69,9 @@ fn send_it(
     sender: String,
     tid: u64,
     outgoing_transfers: Signal<Vec<OutgoingTransfer>>,
+    mut active_tab: Signal<ActiveTab>,
 ) {
+    active_tab.set(ActiveTab::Outgoing);
     if let Some(etx) = etx
         && validate_file(&path, tid, outgoing_transfers)
     {
@@ -151,8 +153,15 @@ pub fn DevicesPanel(
                                                         target_device: target_name,
                                                         status: TransferStatus::Pending,
                                                     });
-                                                active_tab.set(ActiveTab::Outgoing);
-                                                send_it(etx, addr, path, sender, tid, outgoing_transfers);
+                                                send_it(
+                                                    etx,
+                                                    addr,
+                                                    path,
+                                                    sender,
+                                                    tid,
+                                                    outgoing_transfers,
+                                                    active_tab,
+                                                );
                                             }
                                         });
                                     }
@@ -167,6 +176,7 @@ pub fn DevicesPanel(
                                             target_device: target_name.clone(),
                                             status: TransferStatus::Pending,
                                         });
+                                    active_tab.set(ActiveTab::Outgoing);
                                     spawn(async move {
                                         let file = pick_file_to_send(*lang.read()).await;
                                         if let Some(path) = file {
@@ -177,8 +187,15 @@ pub fn DevicesPanel(
                                                         t.filename = filename;
                                                     }
                                                 }
-                                                active_tab.set(ActiveTab::Outgoing);
-                                                send_it(etx, addr, path, sender, tid, outgoing_transfers);
+                                                send_it(
+                                                    etx,
+                                                    addr,
+                                                    path,
+                                                    sender,
+                                                    tid,
+                                                    outgoing_transfers,
+                                                    active_tab,
+                                                );
                                             }
                                         } else {
                                             outgoing_transfers.write().retain(|t| t.id != tid);
