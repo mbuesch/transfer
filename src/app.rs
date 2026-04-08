@@ -1,6 +1,6 @@
 use crate::{
     app::{
-        component_langselect::LanguageSelector, component_panel_devices::DevicesPanel,
+        component_metabox::MetaBox, component_panel_devices::DevicesPanel,
         component_panel_incoming::IncomingPanel, component_panel_outgoing::OutgoingPanel,
     },
     device_name::get_device_name,
@@ -29,7 +29,7 @@ use tokio::{
 use uuid::Uuid;
 
 mod component_banner_sharedfile;
-mod component_langselect;
+mod component_metabox;
 mod component_panel_devices;
 mod component_panel_incoming;
 mod component_panel_outgoing;
@@ -354,12 +354,9 @@ pub fn App() -> Element {
             div { class: "header",
                 div { class: "header-top",
                     h1 { {l.app_title()} }
-                    LanguageSelector { lang }
+                    MetaBox { lang, transfer_step_status }
                 }
                 p { class: "status", "{status_msg}" }
-            }
-            if let Some(msg) = transfer_step_status.read().as_deref() {
-                small { class: "transfer-step-status", "{msg}" }
             }
             div { class: "tabs",
                 button {

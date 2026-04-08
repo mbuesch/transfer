@@ -2,12 +2,18 @@ use crate::app::Language;
 use dioxus::prelude::*;
 
 #[component]
-pub fn LanguageSelector(lang: Signal<Language>) -> Element {
+pub fn MetaBox(
+    lang: Signal<Language>,
+    transfer_step_status: Signal<Option<String>>,
+) -> Element {
     let current = *lang.read();
     let version = env!("CARGO_PKG_VERSION");
 
+    let status: String = transfer_step_status.read().cloned().unwrap_or_default();
+
     rsx! {
         div { class: "meta-box",
+            small { class: "transfer-step-status", "{status}" }
             select {
                 class: "lang-select",
                 value: "{current:?}",
