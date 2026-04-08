@@ -234,6 +234,12 @@ body {
     margin-bottom: 4px;
 }
 
+.device-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+}
+
 .send-btn {
     padding: 10px 40px;
     border: none;
@@ -245,6 +251,12 @@ body {
     cursor: pointer;
     transition: background 0.2s;
     width: 100%;
+}
+
+.device-actions .send-btn {
+    width: auto;
+    flex: 1;
+    padding: 10px 16px;
 }
 
 .accept-btn {

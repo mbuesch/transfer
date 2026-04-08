@@ -17,7 +17,7 @@ use crate::{
             prune_stale_devices,
         },
         packets::{BROADCAST_INTERVAL, DiscoveryPacket, TRANSFER_PORT},
-        transfer::{run_transfer_server, send_file},
+        transfer::{run_transfer_server, send_path},
     },
 };
 use anyhow as ah;

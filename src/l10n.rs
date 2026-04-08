@@ -144,6 +144,13 @@ impl Language {
         }
     }
 
+    pub fn send_folder(self) -> &'static str {
+        match self {
+            Language::En => "Send Folder",
+            Language::De => "Ordner senden",
+        }
+    }
+
     pub fn no_incoming(self) -> &'static str {
         match self {
             Language::En => "No incoming transfers.",
@@ -230,6 +237,14 @@ impl Language {
         match self {
             Language::En => "Select file to send",
             Language::De => "Datei zum Senden auswählen",
+        }
+    }
+
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    pub fn select_folder_to_send_title(self) -> &'static str {
+        match self {
+            Language::En => "Select folder to send",
+            Language::De => "Ordner zum Senden auswählen",
         }
     }
 

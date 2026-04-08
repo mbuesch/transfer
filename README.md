@@ -129,8 +129,6 @@ Ensure that these are allowed on your LAN and router if discovery fails.
   This would work without any user interaction (important) and would improve security.
 - Additionally, it might be a good idea to add an option for a builtin simple **password based encryption** (mix with the DH-key exchange shared secret).
   Just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
-- It shall be made possible to **transfer whole directories at once**, not just single files.
-  This could be done by using an existing archive format and use that internally (always; also for single files).
 - Make the app available in **Play Store**.
   I need your help for that.
   Please get in contact with me, if you are interested in becoming an tester for the app to get it registered in the Play Store.

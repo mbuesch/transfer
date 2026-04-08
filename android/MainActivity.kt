@@ -12,7 +12,6 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
@@ -228,15 +227,15 @@ class MainActivity : WryActivity() {
         @JvmStatic
         fun pickFolder(): String? {
             val activity = instance ?: return null
-            val latch = java.util.concurrent.CountDownLatch(1)
-            val resultUri = java.util.concurrent.atomic.AtomicReference<Uri?>()
+            val latch = CountDownLatch(1)
+            val resultUri = AtomicReference<Uri?>()
 
             Handler(Looper.getMainLooper()).post {
                 val key = "rust_folder_picker_${System.nanoTime()}"
                 val launcher = activity.activityResultRegistry.register(
                     key,
-                    androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-                ) { result: androidx.activity.result.ActivityResult ->
+                    ActivityResultContracts.StartActivityForResult()
+                ) { result: ActivityResult ->
                     if (result.resultCode == Activity.RESULT_OK) {
                         resultUri.set(result.data?.data)
                     }
@@ -252,30 +251,79 @@ class MainActivity : WryActivity() {
 
             latch.await()
             val uri = resultUri.get() ?: return null
-            return resolveTreeUriToPath(activity, uri)
+            return copyTreeUriToCache(activity, uri)
         }
 
-        private fun resolveTreeUriToPath(activity: Activity, uri: Uri): String? {
+        private fun copyTreeUriToCache(activity: Activity, treeUri: Uri): String? {
+            copyStatusMessage = "Caching folder..."
             return try {
-                val docId = DocumentsContract.getTreeDocumentId(uri) ?: return fallbackDir(activity)
-                val split = docId.split(":")
-                if (split.size < 2) return fallbackDir(activity)
-                val type = split[0]
-                val relativePath = split[1]
-                val base = if (type.equals("primary", ignoreCase = true)) {
-                    Environment.getExternalStorageDirectory().absolutePath
-                } else {
-                    "/storage/$type"
-                }
-                if (relativePath.isEmpty()) base else "$base/$relativePath"
+                val folderName = getFolderDisplayName(activity, treeUri) ?: "picked_folder"
+                val destDir = File(activity.cacheDir, folderName)
+                if (destDir.exists()) destDir.deleteRecursively()
+                destDir.mkdirs()
+                val docId = DocumentsContract.getTreeDocumentId(treeUri)
+                val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                copyDocumentTree(activity, treeUri, rootDocUri, destDir)
+                destDir.absolutePath
             } catch (e: Exception) {
-                fallbackDir(activity)
+                null
+            } finally {
+                copyStatusMessage = null
             }
         }
 
-        private fun fallbackDir(activity: Activity): String {
-            return activity.getExternalFilesDir(null)?.absolutePath
-                ?: activity.filesDir.absolutePath
+        private fun getFolderDisplayName(activity: Activity, treeUri: Uri): String? {
+            val docId = DocumentsContract.getTreeDocumentId(treeUri) ?: return null
+            val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+            activity.contentResolver.query(
+                docUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    if (idx >= 0) return cursor.getString(idx)
+                }
+            }
+            return null
+        }
+
+        private fun copyDocumentTree(activity: Activity, treeUri: Uri, docUri: Uri, destDir: File) {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getDocumentId(docUri)
+            )
+            val projection = arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            )
+            activity.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val childDocId = cursor.getString(
+                        cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    )
+                    val displayName = cursor.getString(
+                        cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    )
+                    val mimeType = cursor.getString(
+                        cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    )
+                    val childDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId)
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        val subDir = File(destDir, displayName)
+                        subDir.mkdirs()
+                        copyDocumentTree(activity, treeUri, childDocUri, subDir)
+                    } else {
+                        val destFile = File(destDir, displayName)
+                        activity.contentResolver.openInputStream(childDocUri)?.use { input ->
+                            destFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

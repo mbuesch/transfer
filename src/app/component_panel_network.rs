@@ -1,10 +1,10 @@
 use crate::{
     app::{
         ActiveTab, Language, TransferEvent, component_banner_sharedfile::SharedFileBanner,
-        send_file,
+        send_path,
     },
     ipc::{DiscoveredDevice, OutgoingTransfer, TransferStatus},
-    pick_file::pick_file_to_send,
+    pick_file::{pick_file_to_send, pick_folder_to_send},
 };
 use anyhow::{self as ah, format_err as err};
 use dioxus::prelude::*;
@@ -29,55 +29,19 @@ fn path_filename(path: &Path) -> ah::Result<String> {
         .ok_or_else(|| err!("Invalid file name"))
 }
 
-/// Checks that the file exists and is non-empty.
-/// Updates the transfer entry in `outgoing_transfers` accordingly and returns
-/// `true` if the file can be sent.
-fn validate_file(
-    path: &Path,
-    tid: u64,
-    mut outgoing_transfers: Signal<Vec<OutgoingTransfer>>,
-) -> bool {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() > 0 => {
-            let mut list = outgoing_transfers.write();
-            if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
-                t.file_size = m.len();
-            }
-            true
-        }
-        Ok(_) => {
-            let mut list = outgoing_transfers.write();
-            if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
-                t.status = TransferStatus::Failed("File is empty".to_string());
-            }
-            false
-        }
-        Err(e) => {
-            let mut list = outgoing_transfers.write();
-            if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
-                t.status = TransferStatus::Failed(format!("Cannot read file: {e}"));
-            }
-            false
-        }
-    }
-}
-
 fn send_it(
     etx: Option<mpsc::UnboundedSender<TransferEvent>>,
     addr: SocketAddr,
     path: PathBuf,
     sender: String,
     tid: u64,
-    outgoing_transfers: Signal<Vec<OutgoingTransfer>>,
     mut active_tab: Signal<ActiveTab>,
 ) {
     active_tab.set(ActiveTab::Outgoing);
-    if let Some(etx) = etx
-        && validate_file(&path, tid, outgoing_transfers)
-    {
+    if let Some(etx) = etx {
         tokio::spawn(async move {
-            if let Err(e) = send_file(addr, path, sender, tid, etx).await {
-                log::warn!("Failed to send file: {e}");
+            if let Err(e) = send_path(addr, path, sender, tid, etx).await {
+                log::warn!("Failed to send: {e}");
             }
         });
     }
@@ -125,86 +89,123 @@ pub fn NetworkPanel(
                         span { class: "device-name", "{name}" }
                         span { class: "device-addr", "{addr.ip()}" }
                     }
-                    button {
-                        class: "send-btn",
-                        onclick: {
-                            let target_name = name.clone();
-                            move |_| {
-                                let target_name = target_name.clone();
-                                let etx = event_tx.read().clone();
-                                let sender = device_name.read().clone();
-                                // Take shared files if present, otherwise open picker
-                                let pending_shared: Vec<PathBuf> = shared_files.read().clone();
-                                if !pending_shared.is_empty() {
-                                    shared_files.write().clear();
-                                    for path in pending_shared {
+                    div { class: "device-actions",
+                        if has_shared {
+                            button {
+                                class: "send-btn",
+                                onclick: {
+                                    let target_name = name.clone();
+                                    move |_| {
                                         let target_name = target_name.clone();
-                                        let etx = etx.clone();
-                                        let sender = sender.clone();
+                                        let etx = event_tx.read().clone();
+                                        let sender = device_name.read().clone();
+                                        let pending_shared: Vec<PathBuf> =
+                                            shared_files.read().clone();
+                                        shared_files.write().clear();
+                                        for path in pending_shared {
+                                            let target_name = target_name.clone();
+                                            let etx = etx.clone();
+                                            let sender = sender.clone();
+                                            let tid = next_id(next_send_id);
+                                            spawn(async move {
+                                                if let Ok(filename) = path_filename(&path) {
+                                                    outgoing_transfers
+                                                        .write()
+                                                        .push(OutgoingTransfer {
+                                                            id: tid,
+                                                            filename,
+                                                            file_size: 0,
+                                                            target_device: target_name,
+                                                            status: TransferStatus::Pending,
+                                                        });
+                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                                {l.send_shared()}
+                            }
+                        } else {
+                            button {
+                                class: "send-btn",
+                                onclick: {
+                                    let target_name = name.clone();
+                                    move |_| {
+                                        let target_name = target_name.clone();
+                                        let etx = event_tx.read().clone();
+                                        let sender = device_name.read().clone();
                                         let tid = next_id(next_send_id);
+                                        outgoing_transfers
+                                            .write()
+                                            .push(OutgoingTransfer {
+                                                id: tid,
+                                                filename: String::new(),
+                                                file_size: 0,
+                                                target_device: target_name.clone(),
+                                                status: TransferStatus::Pending,
+                                            });
+                                        active_tab.set(ActiveTab::Outgoing);
                                         spawn(async move {
-                                            if let Ok(filename) = path_filename(&path) {
-                                                outgoing_transfers
-                                                    .write()
-                                                    .push(OutgoingTransfer {
-                                                        id: tid,
-                                                        filename,
-                                                        file_size: 0,
-                                                        target_device: target_name,
-                                                        status: TransferStatus::Pending,
-                                                    });
-                                                send_it(
-                                                    etx,
-                                                    addr,
-                                                    path,
-                                                    sender,
-                                                    tid,
-                                                    outgoing_transfers,
-                                                    active_tab,
-                                                );
+                                            let file = pick_file_to_send(*lang.read()).await;
+                                            if let Some(path) = file {
+                                                if let Ok(filename) = path_filename(&path) {
+                                                    {
+                                                        let mut list = outgoing_transfers.write();
+                                                        if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
+                                                            t.filename = filename;
+                                                        }
+                                                    }
+                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                }
+                                            } else {
+                                                outgoing_transfers.write().retain(|t| t.id != tid);
                                             }
                                         });
                                     }
-                                } else {
-                                    let tid = next_id(next_send_id);
-                                    outgoing_transfers
-                                        .write()
-                                        .push(OutgoingTransfer {
-                                            id: tid,
-                                            filename: String::new(),
-                                            file_size: 0,
-                                            target_device: target_name.clone(),
-                                            status: TransferStatus::Pending,
-                                        });
-                                    active_tab.set(ActiveTab::Outgoing);
-                                    spawn(async move {
-                                        let file = pick_file_to_send(*lang.read()).await;
-                                        if let Some(path) = file {
-                                            if let Ok(filename) = path_filename(&path) {
-                                                {
-                                                    let mut list = outgoing_transfers.write();
-                                                    if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
-                                                        t.filename = filename;
-                                                    }
-                                                }
-                                                send_it(
-                                                    etx,
-                                                    addr,
-                                                    path,
-                                                    sender,
-                                                    tid,
-                                                    outgoing_transfers,
-                                                    active_tab,
-                                                );
-                                            }
-                                        } else {
-                                            outgoing_transfers.write().retain(|t| t.id != tid);
-                                        }
-                                    });
-                                }
+                                },
+                                {l.send_file()}
                             }
-                        },
-                        {if has_shared { l.send_shared() } else { l.send_file() }}
+                            button {
+                                class: "send-btn",
+                                onclick: {
+                                    let target_name = name.clone();
+                                    move |_| {
+                                        let target_name = target_name.clone();
+                                        let etx = event_tx.read().clone();
+                                        let sender = device_name.read().clone();
+                                        let tid = next_id(next_send_id);
+                                        outgoing_transfers
+                                            .write()
+                                            .push(OutgoingTransfer {
+                                                id: tid,
+                                                filename: String::new(),
+                                                file_size: 0,
+                                                target_device: target_name.clone(),
+                                                status: TransferStatus::Pending,
+                                            });
+                                        active_tab.set(ActiveTab::Outgoing);
+                                        spawn(async move {
+                                            let folder = pick_folder_to_send(*lang.read()).await;
+                                            if let Some(path) = folder {
+                                                if let Ok(filename) = path_filename(&path) {
+                                                    {
+                                                        let mut list = outgoing_transfers.write();
+                                                        if let Some(t) = list.iter_mut().find(|t| t.id == tid) {
+                                                            t.filename = filename;
+                                                        }
+                                                    }
+                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                }
+                                            } else {
+                                                outgoing_transfers.write().retain(|t| t.id != tid);
+                                            }
+                                        });
+                                    }
+                                },
+                                {l.send_folder()}
+                            }
+                        }
                     }
                 }
             }
