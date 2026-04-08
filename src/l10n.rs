@@ -218,6 +218,13 @@ impl Language {
         format!("✗ {err}")
     }
 
+    pub fn status_transfer_aborted(self) -> &'static str {
+        match self {
+            Language::En => "Transfer aborted.",
+            Language::De => "Übertragung abgebrochen.",
+        }
+    }
+
     #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn select_file_title(self) -> &'static str {
         match self {

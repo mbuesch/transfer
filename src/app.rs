@@ -328,8 +328,12 @@ pub fn App() -> Element {
                                 }
                             }
                             if should_purge {
+                                let l = *lang.read();
+                                transfer_step_status
+                                    .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
+                                    transfer_step_status.set(None);
                                     incoming_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
@@ -344,8 +348,12 @@ pub fn App() -> Element {
                                 }
                             }
                             if should_purge {
+                                let l = *lang.read();
+                                transfer_step_status
+                                    .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
+                                    transfer_step_status.set(None);
                                     incoming_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
@@ -390,8 +398,12 @@ pub fn App() -> Element {
                                 }
                             }
                             if should_purge {
+                                let l = *lang.read();
+                                transfer_step_status
+                                    .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
+                                    transfer_step_status.set(None);
                                     outgoing_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
