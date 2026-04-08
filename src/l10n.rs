@@ -98,10 +98,10 @@ impl Language {
         }
     }
 
-    pub fn tab_devices(self) -> &'static str {
+    pub fn tab_network(self) -> &'static str {
         match self {
-            Language::En => "Devices",
-            Language::De => "Geräte",
+            Language::En => "Network",
+            Language::De => "Netzwerk",
         }
     }
 

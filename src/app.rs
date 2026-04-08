@@ -1,7 +1,7 @@
 use crate::{
     app::{
-        component_metabox::MetaBox, component_panel_devices::DevicesPanel,
-        component_panel_incoming::IncomingPanel, component_panel_outgoing::OutgoingPanel,
+        component_metabox::MetaBox, component_panel_incoming::IncomingPanel,
+        component_panel_network::NetworkPanel, component_panel_outgoing::OutgoingPanel,
     },
     device_name::get_device_name,
     ip_support::IpSupport,
@@ -33,8 +33,8 @@ use uuid::Uuid;
 
 mod component_banner_sharedfile;
 mod component_metabox;
-mod component_panel_devices;
 mod component_panel_incoming;
+mod component_panel_network;
 mod component_panel_outgoing;
 
 const CSS: &str = include_str!("app/style.css");
@@ -44,7 +44,7 @@ const DISPLAY_TIMEOUT: Duration = Duration::from_secs(120);
 /// Main UI tab.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ActiveTab {
-    Devices,
+    Network,
     Incoming,
     Outgoing,
 }
@@ -61,7 +61,7 @@ pub fn App() -> Element {
     let mut outgoing_transfers: Signal<Vec<OutgoingTransfer>> = use_signal(Vec::new);
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
     let mut transfer_step_status: Signal<Option<String>> = use_signal(|| None);
-    let mut active_tab = use_signal(|| ActiveTab::Devices);
+    let mut active_tab = use_signal(|| ActiveTab::Network);
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
 
@@ -313,7 +313,7 @@ pub fn App() -> Element {
                             }
                             transfer_step_status.set(None);
                             if should_purge {
-                                active_tab.set(ActiveTab::Devices);
+                                active_tab.set(ActiveTab::Network);
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
                                     outgoing_transfers.write().retain(|t| t.id != transfer_id);
@@ -363,9 +363,9 @@ pub fn App() -> Element {
             }
             div { class: "tabs",
                 button {
-                    class: if *active_tab.read() == ActiveTab::Devices { "tab active" } else { "tab" },
-                    onclick: move |_| active_tab.set(ActiveTab::Devices),
-                    {l.tab_devices()}
+                    class: if *active_tab.read() == ActiveTab::Network { "tab active" } else { "tab" },
+                    onclick: move |_| active_tab.set(ActiveTab::Network),
+                    {l.tab_network()}
                 }
                 button {
                     class: if *active_tab.read() == ActiveTab::Incoming { "tab active" } else { "tab" },
@@ -379,8 +379,8 @@ pub fn App() -> Element {
                 }
             }
             div { class: "content",
-                div { hidden: *active_tab.read() != ActiveTab::Devices,
-                    DevicesPanel {
+                div { hidden: *active_tab.read() != ActiveTab::Network,
+                    NetworkPanel {
                         devices,
                         event_tx: event_tx_holder,
                         device_name,

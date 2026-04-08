@@ -84,7 +84,7 @@ fn send_it(
 }
 
 #[component]
-pub fn DevicesPanel(
+pub fn NetworkPanel(
     devices: Signal<HashMap<Uuid, DiscoveredDevice>>,
     event_tx: Signal<Option<mpsc::UnboundedSender<TransferEvent>>>,
     device_name: Signal<String>,
