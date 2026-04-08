@@ -46,84 +46,6 @@ enum ActiveTab {
     Outgoing,
 }
 
-/// Retrieve file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
-#[cfg(target_os = "android")]
-fn get_shared_files() -> Vec<PathBuf> {
-    (|| -> Option<Vec<PathBuf>> {
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
-        vm.attach_current_thread(
-            |env| -> Result<Option<Vec<PathBuf>>, ::jni::errors::Error> {
-                let activity =
-                    unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
-                let class = env.get_object_class(&activity)?;
-                let result = env.call_static_method(
-                    &class,
-                    ::jni::jni_str!("getSharedFiles"),
-                    ::jni::jni_sig!("()[Ljava/lang/String;"),
-                    &[],
-                )?;
-                let jobj = result.l()?;
-                if jobj.is_null() {
-                    return Ok(Some(vec![]));
-                }
-                let array =
-                    env.cast_local::<::jni::objects::JObjectArray<::jni::objects::JString>>(jobj)?;
-                let len = array.len(env)?;
-                let mut paths = vec![];
-                for i in 0..len {
-                    let elem: ::jni::objects::JString = array.get_element(env, i)?;
-                    if !elem.is_null() {
-                        let s = elem.try_to_string(env)?;
-                        paths.push(PathBuf::from(s));
-                    }
-                }
-                // Clear the shared files after retrieval
-                let _ = env.call_static_method(
-                    &class,
-                    ::jni::jni_str!("clearSharedFiles"),
-                    ::jni::jni_sig!("()V"),
-                    &[],
-                );
-                Ok(Some(paths))
-            },
-        )
-        .ok()?
-    })()
-    .unwrap_or_default()
-}
-
-#[cfg(not(target_os = "android"))]
-fn get_shared_files() -> Vec<PathBuf> {
-    vec![]
-}
-
-#[cfg(target_os = "android")]
-fn get_copy_status() -> Option<String> {
-    (|| -> Option<String> {
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
-        vm.attach_current_thread(|env| -> Result<Option<String>, ::jni::errors::Error> {
-            let activity = unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
-            let class = env.get_object_class(&activity)?;
-            let result = env.call_static_method(
-                &class,
-                ::jni::jni_str!("getCopyStatus"),
-                ::jni::jni_sig!("()Ljava/lang/String;"),
-                &[],
-            )?;
-            let jobj = result.l()?;
-            if jobj.is_null() {
-                return Ok(None);
-            }
-            let jstr = env.cast_local::<::jni::objects::JString>(jobj)?;
-            let s = jstr.try_to_string(env)?;
-            Ok(Some(s))
-        })
-        .ok()?
-    })()
-}
-
 #[component]
 pub fn App() -> Element {
     let detected_lang = Language::detect();
@@ -225,48 +147,46 @@ pub fn App() -> Element {
             let (ctx, crx) = mpsc::unbounded_channel::<TransferCommand>();
 
             // Poll for files shared via Android share intent
+            #[cfg(target_os = "android")]
             spawn({
                 let mut shared_files = shared_files;
                 async move {
                     // Brief delay to let the Java side finish processing the share intent
                     sleep(Duration::from_millis(500)).await;
-                    #[cfg(target_os = "android")]
-                    let mut last_copy_msg: Option<String> = None;
+                    let mut prev: Option<String> = None;
                     loop {
-                        let files = tokio::task::spawn_blocking(get_shared_files)
-                            .await
-                            .unwrap_or_default();
+                        let files = tokio::task::spawn_blocking(
+                            crate::android_interface::android_get_shared_files,
+                        )
+                        .await
+                        .unwrap_or_default();
                         if !files.is_empty() {
                             shared_files.set(files);
                         }
-                        #[cfg(target_os = "android")]
+                        match tokio::task::spawn_blocking(
+                            crate::android_interface::android_get_copy_status,
+                        )
+                        .await
+                        .unwrap_or_default()
                         {
-                            let copy_msg = tokio::task::spawn_blocking(get_copy_status)
-                                .await
-                                .unwrap_or(None);
-                            match &copy_msg {
-                                Some(msg) => {
-                                    transfer_step_status.set(Some(msg.clone()));
-                                    last_copy_msg = Some(msg.clone());
-                                }
-                                None => {
-                                    if last_copy_msg.is_some() {
-                                        if transfer_step_status.read().as_deref()
-                                            == last_copy_msg.as_deref()
-                                        {
-                                            transfer_step_status.set(None);
-                                        }
-                                        last_copy_msg = None;
-                                    }
-                                }
+                            Some(msg) => {
+                                transfer_step_status.set(Some(msg.clone()));
+                                prev = Some(msg.clone());
                             }
+                            None if prev.is_some() => {
+                                if transfer_step_status.read().as_deref() == prev.as_deref() {
+                                    transfer_step_status.set(None);
+                                }
+                                prev = None;
+                            }
+                            None => (),
                         }
-                        sleep(Duration::from_secs(1)).await;
+                        sleep(Duration::from_millis(500)).await;
                     }
                 }
             });
-            let (etx, mut erx) = mpsc::unbounded_channel::<TransferEvent>();
 
+            let (etx, mut erx) = mpsc::unbounded_channel::<TransferEvent>();
             cmd_tx.write().replace(ctx);
             event_tx_holder.write().replace(etx.clone());
 

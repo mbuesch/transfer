@@ -13,6 +13,9 @@ mod l10n;
 mod pick_file;
 mod protocol;
 
+#[cfg(target_os = "android")]
+mod android_interface;
+
 #[cfg(not(target_os = "android"))]
 #[derive(Parser)]
 #[command(version, about = "LAN file transfer tool")]
