@@ -10,11 +10,10 @@ A *minimal* and fast cross‑platform file transfer tool for **Android** and **D
 - **Cross‑platform**: Android, Windows desktop, Linux desktop, MacOS desktop
 - Integrates into the **Android share menu / send menu** for easy file sending.
   The file transfer app will appear as an option when sharing files from other apps
-
-Please note that currently **no encryption** is implemented by design - use only on trusted local networks.
-If you want encryption, consider encrypting files before sending (e.g. encrypted Zip/7z archives).
-
-The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
+- **Integrity protection**: The transferred file data and metadata is protected with a strong checksum to ensure integrity and detect corruption during network transfer.
+- **Encryption**: File transfer traffic is always automatically encrypted.
+  This happens transparently in the background without any user interaction or configuration needed.
+  The user can *optionally* set a password for an additional layer of security, which is mixed into the encryption key.
 
 Transfer over the Internet is not supported and will never be supported, as this app is designed for local network file transfers only.
 
@@ -27,7 +26,7 @@ If you need features other than simple file transfer between two devices, there 
 
 ### Alternative solutions include:
 
-- **KDE Connect**: File sharing, remote control, encryption, and much more.
+- **KDE Connect**: File sharing, remote control, and much more.
 - **SMB / Windows File Sharing**: Network file sharing protocol, but requires manual setup and is not user-friendly for non-technical users.
   And typically not usable with the Android share menu.
 - **Bluetooth file transfer**: Built into most devices, but can be slow and unreliable for large files.
@@ -118,20 +117,24 @@ IPv4 discovery uses broadcast; IPv6 discovery uses link-local multicast.
 Some networks block broadcast or multicast.
 Ensure that these are allowed on your LAN and router if discovery fails.
 
-## Security Notes
+## Encryption
 
-- This project deliberately does **not** encrypt traffic.
-- Only run on trusted, private networks (e.g., home LAN).
+The app implements strong encryption for all file transfer traffic.
+This encryption is automatic and transparent to the user by default, requiring no configuration or setup.
+Devices remember each other after the first approved connection - on subsequent connections, the stored key is verified against the presented one.
+
+For users who want an additional layer of security, a password can be set, which is mixed into the encryption key.
+The password must be the same on both devices.
+Click on the Key icon in the app to set or change the password.
+It is generally not necessary to set a password, as the automatic encryption already provides strong security, since peers must be explicitly approved on first contact.
+
+For more details on the encryption protocol, see the [crypto protocol documentation](CRYPTO-PROTOCOL.md).
 
 ## Future Plans
 
-- Use **DH key exchange** to derive a shared secret for transparent symmetric encryption.
-  This would work without any user interaction (important) and would improve security.
-- Additionally, it might be a good idea to add an option for a builtin simple **password based encryption** (mix with the DH-key exchange shared secret).
-  Just a simple password that both sender and receiver enter to encrypt/decrypt the file data.
 - Make the app available in **Play Store**.
   I need your help for that.
-  Please get in contact with me, if you are interested in becoming an tester for the app to get it registered in the Play Store.
+  Please get in contact with me, if you are interested in becoming a tester for the app to get it registered in the Play Store.
 - Provide a built **Android APK** for manual installation (sideloading).
 - Desktop: Add the option for this app to be always-on and sit in the **system tray** waiting for new connections and popping-up on new connections.
   Provide systemd user service files for that.

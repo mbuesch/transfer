@@ -1,4 +1,5 @@
 use crate::{
+    crypto::public_key_fingerprint,
     ip_support::IpSupport,
     ipc::DiscoveredDevice,
     protocol::packets::{DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveryPacket},
@@ -12,9 +13,8 @@ use std::{
     time::Instant,
 };
 use tokio::{net::UdpSocket, sync::Mutex};
-use uuid::Uuid;
 
-pub type DeviceMap = Arc<Mutex<HashMap<Uuid, DiscoveredDevice>>>;
+pub type DeviceMap = Arc<Mutex<HashMap<[u8; 32], DiscoveredDevice>>>;
 
 const IPV6_MULTICAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
@@ -82,7 +82,7 @@ pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
 }
 
 pub async fn broadcast_presence_ipv4(packet: &DiscoveryPacket) {
-    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
+    let data = match packet.serialize() {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
@@ -152,7 +152,7 @@ pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
         }
     };
 
-    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
+    let data = match packet.serialize() {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
@@ -172,6 +172,13 @@ async fn update_device(
     packet: DiscoveryPacket,
     addr: SocketAddr,
 ) -> ah::Result<()> {
+    let rsa_public_key = packet
+        .rsa_public_key()
+        .context("Discovery packet contains an invalid RSA public key")?;
+
+    let fingerprint =
+        public_key_fingerprint(&rsa_public_key).context("Failed to compute RSA key fingerprint")?;
+
     let device_addr = match addr {
         SocketAddr::V6(v6) => {
             if !IpSupport::ipv6() {
@@ -200,9 +207,9 @@ async fn update_device(
         let mut map = devices.lock().await;
 
         let mut insert = false;
-        if let Some(dev) = map.get_mut(&packet.device_id()) {
+        if let Some(dev) = map.get_mut(&fingerprint) {
             if dev.addr.is_ipv6() && device_addr.is_ipv4() && IpSupport::ipv4() {
-                // Prefer IPv4 address if we already have an IPv6 one for the same device ID.
+                // Prefer IPv4 address if we already have an IPv6 one for the same device.
                 insert = true;
             } else if dev.addr.is_ipv4() == device_addr.is_ipv4()
                 && dev.addr.is_ipv6() == device_addr.is_ipv6()
@@ -215,9 +222,9 @@ async fn update_device(
         }
         if insert {
             map.insert(
-                packet.device_id(),
+                fingerprint,
                 DiscoveredDevice {
-                    device_id: packet.device_id(),
+                    fingerprint,
                     device_name: packet
                         .device_name
                         .as_str()
@@ -225,6 +232,7 @@ async fn update_device(
                         .to_string(),
                     addr: device_addr,
                     transfer_port: packet.transfer_port,
+                    rsa_public_key,
                     last_seen: Instant::now(),
                 },
             );
@@ -237,7 +245,11 @@ async fn update_device(
 /// Waits for one discovery packet and processes it.
 /// Returns `true` if the socket is healthy (packet received or ignored),
 /// `false` on a socket-level I/O error (caller should recreate the socket).
-pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &DeviceMap) -> bool {
+pub async fn listen_for_devices(
+    socket: &UdpSocket,
+    own_fp: &[u8; 32],
+    devices: &DeviceMap,
+) -> bool {
     let mut buf = [0u8; DiscoveryPacket::size()];
     match socket.recv_from(&mut buf).await {
         Ok((len, addr)) => {
@@ -250,7 +262,18 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
                 return true;
             }
             match DiscoveryPacket::deserialize(&buf[..len]) {
-                Ok(packet) if packet.device_id() != own_id => {
+                Ok(packet) => {
+                    // Compute the sender's fingerprint to filter out our own packets.
+                    let sender_fp = match packet.rsa_public_key() {
+                        Ok(key) => match public_key_fingerprint(&key) {
+                            Ok(fp) => fp,
+                            Err(_) => return false,
+                        },
+                        Err(_) => return false,
+                    };
+                    if &sender_fp == own_fp {
+                        return false; // Ignore our own discovery packets
+                    }
                     if !packet.verify_checksum() {
                         log::warn!(
                             "Discovery packet from {addr} failed checksum verification - discarding"
@@ -261,7 +284,6 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
                         log::debug!("Failed to update device: {e}");
                     }
                 }
-                Ok(_packet) => (), // Ignore our own discovery packets
                 Err(e) => {
                     log::debug!("Failed to deserialize discovery packet from {addr}: {e}");
                 }

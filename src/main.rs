@@ -10,10 +10,12 @@ use clap::Parser;
 use std::path::PathBuf;
 
 mod app;
+mod crypto;
 mod device_name;
 mod fixedstr;
 mod ip_support;
 mod ipc;
+mod keystore;
 mod l10n;
 mod pick_file;
 mod protocol;

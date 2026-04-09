@@ -3,7 +3,8 @@ use crate::{
         ActiveTab, Language, TransferEvent, component_banner_sharedfile::SharedFileBanner,
         send_path,
     },
-    ipc::{DiscoveredDevice, OutgoingTransfer, TransferStatus},
+    crypto::RsaPublicKey,
+    ipc::{DiscoveredDevice, OutgoingTransfer, SessionPassword, TransferStatus},
     pick_file::{pick_file_to_send, pick_folder_to_send},
 };
 use anyhow::{self as ah, format_err as err};
@@ -12,9 +13,9 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 fn next_id(mut next_send_id: Signal<u64>) -> u64 {
     let mut id = next_send_id.write();
@@ -29,18 +30,31 @@ fn path_filename(path: &Path) -> ah::Result<String> {
         .ok_or_else(|| err!("Invalid file name"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_it(
     etx: Option<mpsc::UnboundedSender<TransferEvent>>,
     addr: SocketAddr,
     path: PathBuf,
     sender: String,
+    peer_rsa_pub_key: RsaPublicKey,
+    session_password: SessionPassword,
     tid: u64,
     mut active_tab: Signal<ActiveTab>,
 ) {
     active_tab.set(ActiveTab::Outgoing);
     if let Some(etx) = etx {
         tokio::spawn(async move {
-            if let Err(e) = send_path(addr, path, sender, tid, etx).await {
+            if let Err(e) = send_path(
+                addr,
+                path,
+                sender,
+                peer_rsa_pub_key,
+                session_password,
+                tid,
+                etx,
+            )
+            .await
+            {
                 log::warn!("Failed to send: {e}");
             }
         });
@@ -49,7 +63,7 @@ fn send_it(
 
 #[component]
 pub fn NetworkPanel(
-    devices: Signal<HashMap<Uuid, DiscoveredDevice>>,
+    devices: Signal<HashMap<[u8; 32], DiscoveredDevice>>,
     event_tx: Signal<Option<mpsc::UnboundedSender<TransferEvent>>>,
     device_name: Signal<String>,
     next_send_id: Signal<u64>,
@@ -57,6 +71,7 @@ pub fn NetworkPanel(
     shared_files: Signal<Vec<PathBuf>>,
     active_tab: Signal<ActiveTab>,
 ) -> Element {
+    let session_password: SessionPassword = use_context();
     let lang = use_context::<Signal<Language>>();
     let l = *lang.read();
     let has_shared = !shared_files.read().is_empty();
@@ -73,9 +88,17 @@ pub fn NetworkPanel(
         };
     }
 
-    let dev_list: Vec<(Uuid, String, SocketAddr, u16)> = devs
+    let dev_list: Vec<([u8; 32], String, SocketAddr, u16, RsaPublicKey)> = devs
         .values()
-        .map(|d| (d.device_id, d.device_name.clone(), d.addr, d.transfer_port))
+        .map(|d| {
+            (
+                d.fingerprint,
+                d.device_name.clone(),
+                d.addr,
+                d.transfer_port,
+                d.rsa_public_key.clone(),
+            )
+        })
         .collect();
 
     rsx! {
@@ -83,8 +106,10 @@ pub fn NetworkPanel(
             SharedFileBanner { shared_files }
         }
         div { class: "device-list",
-            for (id, name, addr, _port) in dev_list {
-                div { class: "device-card", key: "{id}",
+            for (fp, name, addr, _port, rsa_key) in dev_list {
+                div {
+                    class: "device-card",
+                    key: "{crate::crypto::fingerprint_hex(&fp)}",
                     div { class: "device-info",
                         span { class: "device-name", "{name}" }
                         span { class: "device-addr", "{addr.ip()}" }
@@ -95,10 +120,14 @@ pub fn NetworkPanel(
                                 class: "send-btn",
                                 onclick: {
                                     let target_name = name.clone();
+                                    let sp = Arc::clone(&session_password);
+                                    let rsa_key = rsa_key.clone();
                                     move |_| {
                                         let target_name = target_name.clone();
                                         let etx = event_tx.read().clone();
                                         let sender = device_name.read().clone();
+                                        let sp = Arc::clone(&sp);
+                                        let rsa_key = rsa_key.clone();
                                         let pending_shared: Vec<PathBuf> =
                                             shared_files.read().clone();
                                         shared_files.write().clear();
@@ -106,6 +135,8 @@ pub fn NetworkPanel(
                                             let target_name = target_name.clone();
                                             let etx = etx.clone();
                                             let sender = sender.clone();
+                                            let sp = Arc::clone(&sp);
+                                            let rsa_key = rsa_key.clone();
                                             let tid = next_id(next_send_id);
                                             spawn(async move {
                                                 if let Ok(filename) = path_filename(&path) {
@@ -118,7 +149,7 @@ pub fn NetworkPanel(
                                                             target_device: target_name,
                                                             status: TransferStatus::Pending,
                                                         });
-                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                    send_it(etx, addr, path, sender, rsa_key, sp, tid, active_tab);
                                                 }
                                             });
                                         }
@@ -131,10 +162,14 @@ pub fn NetworkPanel(
                                 class: "send-btn",
                                 onclick: {
                                     let target_name = name.clone();
+                                    let sp = Arc::clone(&session_password);
+                                    let rsa_key = rsa_key.clone();
                                     move |_| {
                                         let target_name = target_name.clone();
                                         let etx = event_tx.read().clone();
                                         let sender = device_name.read().clone();
+                                        let sp = Arc::clone(&sp);
+                                        let rsa_key = rsa_key.clone();
                                         let tid = next_id(next_send_id);
                                         outgoing_transfers
                                             .write()
@@ -156,7 +191,7 @@ pub fn NetworkPanel(
                                                             t.filename = filename;
                                                         }
                                                     }
-                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                    send_it(etx, addr, path, sender, rsa_key, sp, tid, active_tab);
                                                 }
                                             } else {
                                                 outgoing_transfers.write().retain(|t| t.id != tid);
@@ -170,10 +205,14 @@ pub fn NetworkPanel(
                                 class: "send-btn",
                                 onclick: {
                                     let target_name = name.clone();
+                                    let sp = Arc::clone(&session_password);
+                                    let rsa_key = rsa_key.clone();
                                     move |_| {
                                         let target_name = target_name.clone();
                                         let etx = event_tx.read().clone();
                                         let sender = device_name.read().clone();
+                                        let sp = Arc::clone(&sp);
+                                        let rsa_key = rsa_key.clone();
                                         let tid = next_id(next_send_id);
                                         outgoing_transfers
                                             .write()
@@ -195,7 +234,7 @@ pub fn NetworkPanel(
                                                             t.filename = filename;
                                                         }
                                                     }
-                                                    send_it(etx, addr, path, sender, tid, active_tab);
+                                                    send_it(etx, addr, path, sender, rsa_key, sp, tid, active_tab);
                                                 }
                                             } else {
                                                 outgoing_transfers.write().retain(|t| t.id != tid);

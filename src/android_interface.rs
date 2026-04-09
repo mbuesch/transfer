@@ -2,6 +2,38 @@ use crate::l10n::Language;
 use anyhow as ah;
 use std::path::PathBuf;
 
+/// Return the app's internal files directory (equivalent to `Context.getFilesDir()`).
+///
+/// This is the correct writable data directory on Android; the `dirs` crate does not
+/// support Android and returns `None` for all path queries.
+pub fn android_get_files_dir() -> Option<PathBuf> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| -> Result<Option<PathBuf>, ::jni::errors::Error> {
+        let activity = unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+        let files_dir = env.call_method(
+            &activity,
+            ::jni::jni_str!("getFilesDir"),
+            ::jni::jni_sig!("()Ljava/io/File;"),
+            &[],
+        )?;
+        let files_dir_obj = files_dir.l()?;
+        if files_dir_obj.is_null() {
+            return Ok(None);
+        }
+        let abs_path = env.call_method(
+            &files_dir_obj,
+            ::jni::jni_str!("getAbsolutePath"),
+            ::jni::jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?;
+        let jstr = env.cast_local::<::jni::objects::JString>(abs_path.l()?)?;
+        let s = jstr.try_to_string(env)?;
+        Ok(Some(PathBuf::from(s)))
+    })
+    .ok()?
+}
+
 /// Retrieve file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
 pub fn android_get_shared_files() -> Vec<PathBuf> {
     (|| -> Option<Vec<PathBuf>> {
