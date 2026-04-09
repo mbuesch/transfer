@@ -6,10 +6,12 @@ use dioxus::desktop::{Config, WindowBuilder};
 use clap::Parser;
 
 mod app;
+mod crypto;
 mod device_name;
 mod fixedstr;
 mod ip_support;
 mod ipc;
+mod keystore;
 mod l10n;
 mod pick_file;
 mod protocol;

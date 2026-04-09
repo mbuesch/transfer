@@ -304,4 +304,172 @@ impl Language {
             Language::De => "Entfernen",
         }
     }
+
+    pub fn password_set_btn_tooltip(self) -> &'static str {
+        match self {
+            Language::En => "Set optional session password",
+            Language::De => "Optionales Sitzungspasswort festlegen",
+        }
+    }
+
+    pub fn password_dialog_title(self) -> &'static str {
+        match self {
+            Language::En => "Optional Session Password",
+            Language::De => "Optionales Sitzungspasswort",
+        }
+    }
+
+    pub fn password_dialog_hint(self) -> &'static str {
+        match self {
+            Language::En => {
+                "You can optionally set a shared password for additional encryption strength. \
+                 Both sender and receiver must use the same password. Leave empty for none."
+            }
+            Language::De => {
+                "Du kannst optional ein gemeinsames Passwort für zusätzliche Verschlüsselungsstärke \
+                 festlegen. Sender und Empfänger müssen dasselbe Passwort verwenden. Leer lassen \
+                 für keines."
+            }
+        }
+    }
+
+    pub fn password_dialog_placeholder(self) -> &'static str {
+        match self {
+            Language::En => "Password (optional)",
+            Language::De => "Passwort (optional)",
+        }
+    }
+
+    pub fn password_dialog_ok(self) -> &'static str {
+        match self {
+            Language::En => "OK",
+            Language::De => "OK",
+        }
+    }
+
+    pub fn password_dialog_cancel(self) -> &'static str {
+        match self {
+            Language::En => "Cancel",
+            Language::De => "Abbrechen",
+        }
+    }
+
+    pub fn key_changed_title(self) -> &'static str {
+        match self {
+            Language::En => "⚠ Security Warning: Key Changed",
+            Language::De => "⚠ Sicherheitswarnung: Schlüssel geändert",
+        }
+    }
+
+    pub fn key_changed_body(self, device_name: &str) -> String {
+        match self {
+            Language::En => format!(
+                "The cryptographic identity of \"{device_name}\" has changed since the last \
+                 connection. This may indicate a man-in-the-middle attack or that the device \
+                 was reinstalled."
+            ),
+            Language::De => format!(
+                "Die kryptografische Identität von \"{device_name}\" hat sich seit der letzten \
+                 Verbindung geändert. Dies könnte auf einen Man-in-the-Middle-Angriff hinweisen \
+                 oder darauf, dass das Gerät neu installiert wurde."
+            ),
+        }
+    }
+
+    pub fn stored_fp_label(self) -> &'static str {
+        match self {
+            Language::En => "Stored fingerprint: ",
+            Language::De => "Gespeicherter Fingerabdruck: ",
+        }
+    }
+
+    pub fn presented_fp_label(self) -> &'static str {
+        match self {
+            Language::En => "Presented fingerprint: ",
+            Language::De => "Vorgelegter Fingerabdruck: ",
+        }
+    }
+
+    pub fn key_changed_hint(self) -> &'static str {
+        match self {
+            Language::En => {
+                "Only proceed if you are certain this is not an attack. \
+                 Trusting will update the stored key."
+            }
+            Language::De => {
+                "Fahre nur fort, wenn du sicher bist, dass dies kein Angriff ist. \
+                 Vertrauen aktualisiert den gespeicherten Schlüssel."
+            }
+        }
+    }
+
+    pub fn accept_key_change_btn(self) -> &'static str {
+        match self {
+            Language::En => "Trust & Proceed",
+            Language::De => "Vertrauen & Fortfahren",
+        }
+    }
+
+    pub fn reject_key_change_btn(self) -> &'static str {
+        match self {
+            Language::En => "Reject",
+            Language::De => "Ablehnen",
+        }
+    }
+
+    pub fn new_peer_title(self) -> &'static str {
+        match self {
+            Language::En => "New Unknown Peer",
+            Language::De => "Neues unbekanntes Gerät",
+        }
+    }
+
+    pub fn new_peer_body(self) -> &'static str {
+        match self {
+            Language::En => {
+                "A connection from an unknown peer was received. \
+                 This device has never connected before and is not stored in your keystore."
+            }
+            Language::De => {
+                "Eine Verbindung von einem unbekannten Gerät wurde empfangen. \
+                 Dieses Gerät hat sich noch nie verbunden und ist nicht im Schlüsselspeicher gespeichert."
+            }
+        }
+    }
+
+    pub fn new_peer_hint(self) -> &'static str {
+        match self {
+            Language::En => {
+                "Reject if this looks unexpected or if you think this device should already \
+                 be known to you. Accepting will permanently store this peer's identity - \
+                 you will not be asked again for this device."
+            }
+            Language::De => {
+                "Lehne ab, wenn dies unerwartet aussieht oder wenn du glaubst, dieses Gerät \
+                 sollte dir bereits bekannt sein. Bei Akzeptieren wird die Identität dieses \
+                 Geräts dauerhaft gespeichert - du wirst nicht erneut gefragt."
+            }
+        }
+    }
+
+    pub fn new_peer_fingerprint_label(self) -> &'static str {
+        match self {
+            Language::En => "Fingerprint: ",
+            Language::De => "Fingerabdruck: ",
+        }
+    }
+
+    pub fn new_peer_accept_btn(self) -> &'static str {
+        match self {
+            Language::En => "Accept & Remember",
+            Language::De => "Akzeptieren & Merken",
+        }
+    }
+
+    pub fn new_peer_reject_btn(self) -> &'static str {
+        match self {
+            Language::En => "Reject",
+            Language::De => "Ablehnen",
+        }
+    }
 }

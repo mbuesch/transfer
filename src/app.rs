@@ -3,12 +3,14 @@ use crate::{
         component_metabox::MetaBox, component_panel_incoming::IncomingPanel,
         component_panel_network::NetworkPanel, component_panel_outgoing::OutgoingPanel,
     },
+    crypto::public_key_fingerprint,
     device_name::get_device_name,
     ip_support::IpSupport,
     ipc::{
-        DiscoveredDevice, IncomingTransfer, OutgoingTransfer, TransferCommand, TransferEvent,
-        TransferStatus,
+        DiscoveredDevice, IncomingTransfer, OutgoingTransfer, SessionPassword, TransferCommand,
+        TransferEvent, TransferStatus,
     },
+    keystore::load_or_generate_identity,
     l10n::Language,
     protocol::{
         discovery::{
@@ -29,7 +31,6 @@ use tokio::{
     sync::{Mutex, mpsc},
     time::{sleep, timeout},
 };
-use uuid::Uuid;
 
 mod component_banner_sharedfile;
 mod component_metabox;
@@ -53,8 +54,9 @@ enum ActiveTab {
 pub fn App() -> Element {
     let detected_lang = Language::detect();
     let lang = use_context_provider(|| Signal::new(detected_lang));
-    let device_id = Uuid::new_v4();
     let device_name = use_signal(get_device_name);
+    let session_password: SessionPassword =
+        use_context_provider(|| Arc::new(std::sync::Mutex::new(String::new())));
 
     let mut devices = use_signal(HashMap::new);
     let mut incoming_transfers = use_signal(Vec::<IncomingTransfer>::new);
@@ -68,6 +70,18 @@ pub fn App() -> Element {
 
     // Folder for automatic accepting of incoming files (None = manual accept)
     let auto_accept_folder: Signal<Option<PathBuf>> = use_signal(|| None);
+    // Whether the password prompt dialog is visible.
+    let mut show_password_prompt = use_signal(|| false);
+    // Editable password input value (not the committed password).
+    let mut password_input = use_signal(String::new);
+
+    // Pending key mismatch warning: (transfer_id, is_incoming, device_name, stored_fp, presented_fp)
+    #[allow(clippy::type_complexity)]
+    let mut key_mismatch_warning: Signal<Option<(u64, bool, String, String, String)>> =
+        use_signal(|| None);
+
+    // Pending new-peer confirmation: (transfer_id, fingerprint)
+    let mut new_peer_prompt: Signal<Option<(u64, String)>> = use_signal(|| None);
 
     // Channel for transfer commands (UI -> transfer server)
     let mut cmd_tx = use_signal(|| None);
@@ -76,11 +90,23 @@ pub fn App() -> Element {
 
     // Start background services once
     use_hook({
+        let session_password = Arc::clone(&session_password);
         move || {
-            let device_map = Arc::new(Mutex::new(HashMap::new()));
+            let device_map: DeviceMap = Arc::new(Mutex::new(HashMap::new()));
+
+            // Load (or generate) the local RSA identity so we can include our public key
+            // in discovery packets.  This runs once at startup; it may take a few seconds
+            // the first time when the key pair is generated.
+            let (_, our_pub_key) = tokio::task::block_in_place(load_or_generate_identity)
+                .expect("Failed to load/generate RSA identity");
+
+            // Compute our own fingerprint for self-filtering in discovery.
+            let own_fp = public_key_fingerprint(&our_pub_key)
+                .expect("Failed to compute RSA identity fingerprint");
 
             // Start discovery broadcasters (IPv4 + IPv6)
-            let packet = DiscoveryPacket::new(device_id, &device_name.read(), TRANSFER_PORT);
+            let packet = DiscoveryPacket::new(&device_name.read(), TRANSFER_PORT, &our_pub_key)
+                .expect("Failed to create discovery packet");
             if IpSupport::ipv4() {
                 tokio::spawn({
                     let packet = packet.clone();
@@ -112,7 +138,7 @@ pub fn App() -> Element {
                         || async { create_ipv4_listener_socket().await },
                         "IPv4",
                         device_map,
-                        device_id,
+                        own_fp,
                     )
                 });
             }
@@ -123,7 +149,7 @@ pub fn App() -> Element {
                         || async { create_ipv6_listener_socket().await },
                         "IPv6",
                         device_map,
-                        device_id,
+                        own_fp,
                     )
                 });
             }
@@ -137,7 +163,7 @@ pub fn App() -> Element {
 
                         prune_stale_devices(&device_map).await;
 
-                        let snapshot: HashMap<Uuid, DiscoveredDevice> =
+                        let snapshot: HashMap<[u8; 32], DiscoveredDevice> =
                             device_map.lock().await.clone();
                         let count = snapshot.len();
                         devices.set(snapshot);
@@ -147,7 +173,6 @@ pub fn App() -> Element {
                 }
             });
 
-            // Transfer server
             let (ctx, crx) = mpsc::unbounded_channel::<TransferCommand>();
 
             // Poll for files shared via Android share intent
@@ -197,7 +222,14 @@ pub fn App() -> Element {
             event_tx_holder.write().replace(etx.clone());
 
             tokio::spawn(async move {
-                run_transfer_server(TRANSFER_PORT, etx, crx).await;
+                run_transfer_server(
+                    TRANSFER_PORT,
+                    etx,
+                    crx,
+                    Arc::clone(&session_password),
+                    Arc::clone(&device_map),
+                )
+                .await;
             });
 
             // Process transfer events
@@ -372,6 +404,27 @@ pub fn App() -> Element {
                             *transfer_step_status_gen.write() += 1;
                             transfer_step_status.set(message);
                         }
+                        TransferEvent::KeyMismatchWarning {
+                            transfer_id,
+                            device_name,
+                            stored_fingerprint,
+                            presented_fingerprint,
+                            is_incoming,
+                        } => {
+                            key_mismatch_warning.set(Some((
+                                transfer_id,
+                                is_incoming,
+                                device_name,
+                                stored_fingerprint,
+                                presented_fingerprint,
+                            )));
+                        }
+                        TransferEvent::NewPeerContact {
+                            transfer_id,
+                            fingerprint,
+                        } => {
+                            new_peer_prompt.set(Some((transfer_id, fingerprint)));
+                        }
                     }
                 }
             });
@@ -386,7 +439,11 @@ pub fn App() -> Element {
             div { class: "header",
                 div { class: "header-top",
                     h1 { {l.app_title()} }
-                    MetaBox { lang, transfer_step_status }
+                    MetaBox {
+                        lang,
+                        transfer_step_status,
+                        on_set_password: move |_| show_password_prompt.set(true),
+                    }
                 }
                 p { class: "status", "{status_msg}" }
             }
@@ -431,6 +488,151 @@ pub fn App() -> Element {
                 }
             }
         }
+
+        // Optional session password dialog
+        if *show_password_prompt.read() {
+            div { class: "dialog-overlay",
+                div { class: "dialog",
+                    h2 { {l.password_dialog_title()} }
+                    p { class: "hint", {l.password_dialog_hint()} }
+                    input {
+                        r#type: "password",
+                        class: "password-input",
+                        placeholder: l.password_dialog_placeholder(),
+                        value: "{password_input}",
+                        oninput: move |e| password_input.set(e.value()),
+                        onkeydown: {
+                            let session_password = Arc::clone(&session_password);
+                            move |e: Event<KeyboardData>| {
+                                if e.key() == Key::Enter {
+                                    let pw = password_input.read().clone();
+                                    *session_password.lock().expect("Lock poisoned") = pw;
+                                    show_password_prompt.set(false);
+                                }
+                            }
+                        },
+                    }
+                    div { class: "dialog-buttons",
+                        button {
+                            class: "btn-primary",
+                            onclick: {
+                                let session_password = Arc::clone(&session_password);
+                                move |_| {
+                                    let pw = password_input.read().clone();
+                                    *session_password.lock().expect("Lock poisoned") = pw;
+                                    show_password_prompt.set(false);
+                                }
+                            },
+                            {l.password_dialog_ok()}
+                        }
+                        button {
+                            class: "btn-secondary",
+                            onclick: move |_| show_password_prompt.set(false),
+                            {l.password_dialog_cancel()}
+                        }
+                    }
+                }
+            }
+        }
+
+        // Key mismatch warning dialog
+        if let Some((transfer_id, _is_incoming, device_name, stored_fp, presented_fp)) = key_mismatch_warning
+            .read()
+            .clone()
+        {
+            div { class: "dialog-overlay",
+                div { class: "dialog dialog-warning",
+                    h2 { {l.key_changed_title()} }
+                    p { class: "warning-text", {l.key_changed_body(&device_name)} }
+                    div { class: "fingerprint-block",
+                        p {
+                            strong { {l.stored_fp_label()} }
+                            span { class: "fingerprint", "{stored_fp}" }
+                        }
+                        p {
+                            strong { {l.presented_fp_label()} }
+                            span { class: "fingerprint", "{presented_fp}" }
+                        }
+                    }
+                    p { class: "warning-confirm-text", {l.key_changed_hint()} }
+                    div { class: "dialog-buttons",
+                        button {
+                            class: "btn-danger",
+                            onclick: {
+                                move |_| {
+                                    key_mismatch_warning.set(None);
+                                    if let Some(tx) = cmd_tx.read().as_ref() {
+                                        let _ = tx
+                                            .send(TransferCommand::AcceptKeyChange {
+                                                transfer_id,
+                                            });
+                                    }
+                                }
+                            },
+                            {l.accept_key_change_btn()}
+                        }
+                        button {
+                            class: "btn-primary",
+                            onclick: move |_| {
+                                key_mismatch_warning.set(None);
+                                if let Some(tx) = cmd_tx.read().as_ref() {
+                                    let _ = tx
+                                        .send(TransferCommand::RejectKeyChange {
+                                            transfer_id,
+                                        });
+                                }
+                            },
+                            {l.reject_key_change_btn()}
+                        }
+                    }
+                }
+            }
+        }
+
+        // New unknown peer confirmation dialog
+        if let Some((transfer_id, fingerprint)) = new_peer_prompt.read().clone() {
+            div { class: "dialog-overlay",
+                div { class: "dialog",
+                    h2 { {l.new_peer_title()} }
+                    p { {l.new_peer_body()} }
+                    div { class: "fingerprint-block",
+                        p {
+                            strong { {l.new_peer_fingerprint_label()} }
+                            span { class: "fingerprint", "{fingerprint}" }
+                        }
+                    }
+                    p { class: "hint", {l.new_peer_hint()} }
+                    div { class: "dialog-buttons",
+                        button {
+                            class: "btn-primary",
+                            onclick: move |_| {
+                                new_peer_prompt.set(None);
+                                if let Some(tx) = cmd_tx.read().as_ref() {
+                                    let _ = tx
+                                        .send(TransferCommand::AcceptNewPeer {
+                                            transfer_id,
+                                        });
+                                }
+                            },
+                            {l.new_peer_accept_btn()}
+                        }
+                        button {
+                            class: "btn-secondary",
+                            onclick: move |_| {
+                                new_peer_prompt.set(None);
+                                if let Some(tx) = cmd_tx.read().as_ref() {
+                                    let _ = tx
+                                        .send(TransferCommand::RejectNewPeer {
+                                            transfer_id,
+                                        });
+                                }
+                            },
+                            {l.new_peer_reject_btn()}
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -438,7 +640,7 @@ async fn run_discovery_listener<F, Fut>(
     create_socket: F,
     label: &'static str,
     device_map: DeviceMap,
-    own_id: Uuid,
+    own_fp: [u8; 32],
 ) where
     F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = ah::Result<UdpSocket>> + Send,
@@ -449,7 +651,7 @@ async fn run_discovery_listener<F, Fut>(
             Ok(socket) => loop {
                 match timeout(
                     idle_timeout,
-                    listen_for_devices(&socket, own_id, &device_map),
+                    listen_for_devices(&socket, &own_fp, &device_map),
                 )
                 .await
                 {

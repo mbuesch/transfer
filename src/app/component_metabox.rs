@@ -2,7 +2,11 @@ use crate::app::Language;
 use dioxus::prelude::*;
 
 #[component]
-pub fn MetaBox(lang: Signal<Language>, transfer_step_status: Signal<Option<String>>) -> Element {
+pub fn MetaBox(
+    lang: Signal<Language>,
+    transfer_step_status: Signal<Option<String>>,
+    on_set_password: EventHandler<()>,
+) -> Element {
     let status: String = transfer_step_status.read().cloned().unwrap_or_default();
     let current_lang = *lang.read();
     let version = env!("CARGO_PKG_VERSION");
@@ -10,6 +14,12 @@ pub fn MetaBox(lang: Signal<Language>, transfer_step_status: Signal<Option<Strin
     rsx! {
         div { class: "meta-box",
             small { class: "transfer-step-status", "{status}" }
+            button {
+                class: "pwd-btn",
+                title: current_lang.password_set_btn_tooltip(),
+                onclick: move |_| on_set_password.call(()),
+                "🔑"
+            }
             select {
                 class: "lang-select",
                 value: "{current_lang:?}",

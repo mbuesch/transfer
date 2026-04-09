@@ -1,6 +1,15 @@
+use super::transfer_crypto::{
+    PendingPeerDecision, perform_handshake_as_initiator, perform_handshake_as_responder,
+    recv_encrypted_message, send_encrypted_message,
+};
 use crate::{
-    ipc::{IncomingTransfer, TransferCommand, TransferEvent, TransferStatus},
-    protocol::packets::{TransferHeader, checksum_new},
+    crypto::{RsaPublicKey, SessionKey},
+    ipc::{IncomingTransfer, SessionPassword, TransferCommand, TransferEvent, TransferStatus},
+    keystore::trust_peer,
+    protocol::{
+        discovery::DeviceMap,
+        packets::{TransferHeader, checksum_new},
+    },
 };
 use anyhow::{self as ah, Context as _, format_err as err};
 use bytesize::ByteSize;
@@ -172,12 +181,15 @@ struct PendingIncoming {
     transfer_id: u64,
     header: TransferHeader,
     stream: TcpStream,
+    session_key: SessionKey,
 }
 
 pub async fn run_transfer_server(
     port: u16,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     mut cmd_rx: mpsc::UnboundedReceiver<TransferCommand>,
+    session_password: SessionPassword,
+    device_map: DeviceMap,
 ) {
     let listener = match create_tcp_listener(port) {
         Ok(l) => {
@@ -196,9 +208,12 @@ pub async fn run_transfer_server(
         }
     };
 
-    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let pending: Arc<Mutex<HashMap<u64, PendingIncoming>>> = Arc::new(Mutex::new(HashMap::new()));
+    let pending_decisions: Arc<Mutex<HashMap<u64, PendingPeerDecision>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     let pending_clone = Arc::clone(&pending);
+    let pending_decisions_clone = Arc::clone(&pending_decisions);
     let event_tx_clone = event_tx.clone();
 
     // Spawn acceptor task
@@ -218,6 +233,8 @@ pub async fn run_transfer_server(
             };
             let event_tx = event_tx_clone.clone();
             let pending = Arc::clone(&pending_clone);
+            let pending_decisions = Arc::clone(&pending_decisions_clone);
+            let session_password = Arc::clone(&session_password);
 
             let transfer_id = next_id;
             next_id += 1;
@@ -225,9 +242,19 @@ pub async fn run_transfer_server(
             // Reap completed tasks to avoid unbounded JoinSet growth.
             while join_set.try_join_next().is_some() {}
 
+            let device_map = Arc::clone(&device_map);
             join_set.spawn(async move {
-                if let Err(e) =
-                    handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
+                if let Err(e) = handle_incoming_connection(
+                    stream,
+                    addr,
+                    transfer_id,
+                    session_password,
+                    event_tx,
+                    pending,
+                    pending_decisions,
+                    device_map,
+                )
+                .await
                 {
                     log::error!("Incoming connection handling error: {e}");
                 }
@@ -248,6 +275,7 @@ pub async fn run_transfer_server(
                     tokio::spawn(async move {
                         if let Err(e) = receive_file(
                             incoming.stream,
+                            incoming.session_key,
                             incoming.header,
                             transfer_id,
                             save_path,
@@ -272,28 +300,97 @@ pub async fn run_transfer_server(
                     let _ = event_tx.send(TransferEvent::Rejected { transfer_id });
                 }
             }
+            TransferCommand::AcceptKeyChange { transfer_id } => {
+                let mut map = pending_decisions.lock().await;
+                if let Some(pt) = map.remove(&transfer_id) {
+                    // Persist the new trust.
+                    if let Err(e) = trust_peer(&pt.peer_name, &pt.peer_key) {
+                        log::warn!("Failed to persist trusted peer: {e}");
+                    }
+                    let _ = pt.decision_tx.send(true);
+                }
+            }
+            TransferCommand::RejectKeyChange { transfer_id } => {
+                let mut map = pending_decisions.lock().await;
+                if let Some(pt) = map.remove(&transfer_id) {
+                    let _ = pt.decision_tx.send(false);
+                }
+            }
+            TransferCommand::AcceptNewPeer { transfer_id } => {
+                let mut map = pending_decisions.lock().await;
+                if let Some(pt) = map.remove(&transfer_id) {
+                    // Key persistence is handled inside perform_handshake_as_responder
+                    // (FirstContact branch) once the decision_rx resolves to true.
+                    let _ = pt.decision_tx.send(true);
+                }
+            }
+            TransferCommand::RejectNewPeer { transfer_id } => {
+                let mut map = pending_decisions.lock().await;
+                if let Some(pt) = map.remove(&transfer_id) {
+                    let _ = pt.decision_tx.send(false);
+                }
+            }
         }
     }
 
     accept_handle.abort();
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_incoming_connection(
     mut stream: TcpStream,
     addr: SocketAddr,
     transfer_id: u64,
+    session_password: SessionPassword,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     pending: Arc<Mutex<HashMap<u64, PendingIncoming>>>,
+    pending_decisions: Arc<Mutex<HashMap<u64, PendingPeerDecision>>>,
+    device_map: DeviceMap,
 ) -> ah::Result<()> {
-    log::debug!("Read header for incoming transfer {transfer_id}...");
+    // --- Crypto handshake (as responder) ---
+    log::debug!("Performing crypto handshake for incoming transfer {transfer_id}...");
+    send_status(&event_tx, transfer_id, Some("Handshaking..."));
+
+    let session_key = match perform_handshake_as_responder(
+        &mut stream,
+        transfer_id,
+        session_password,
+        &event_tx,
+        &pending_decisions,
+        &device_map,
+    )
+    .await
+    {
+        Ok(k) => k,
+        Err(e) => {
+            log::warn!("Handshake failed for transfer {transfer_id}: {e}");
+            return Err(e);
+        }
+    };
+
+    // --- Read encrypted TransferHeader ---
+    log::debug!("Reading encrypted header for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Reading header..."));
-    let mut header_buf = vec![0u8; TransferHeader::size()];
-    match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(e.into()),
-        Err(_) => return Err(err!("Timeout while reading header")),
+    // Per-session monotonic timestamp counter for replay-attack prevention.
+    let mut last_ts_us: u64 = 0;
+    let header_bytes = match timeout(
+        HEADER_TIMEOUT,
+        recv_encrypted_message(&mut stream, &session_key, &mut last_ts_us),
+    )
+    .await
+    {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err(err!("Timeout while reading encrypted header")),
+    };
+
+    if header_bytes.len() != TransferHeader::size() {
+        return Err(err!(
+            "Encrypted header decrypted to wrong size: {}",
+            header_bytes.len()
+        ));
     }
-    let header = TransferHeader::deserialize(&header_buf)?;
+    let header = TransferHeader::deserialize(&header_bytes)?;
     let header_filename = header.filename.as_str().context("Decode filename failed")?;
     let header_sender_name = header
         .sender_name
@@ -332,6 +429,7 @@ async fn handle_incoming_connection(
                 transfer_id,
                 header,
                 stream,
+                session_key,
             },
         );
     }
@@ -405,6 +503,7 @@ fn find_available_path(file_path: &PathBuf) -> ah::Result<PathBuf> {
 
 async fn receive_file(
     mut stream: TcpStream,
+    session_key: SessionKey,
     header: TransferHeader,
     transfer_id: u64,
     save_path: PathBuf,
@@ -412,62 +511,69 @@ async fn receive_file(
 ) -> ah::Result<()> {
     log::debug!("Accepting transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Accepting..."));
-    if let Err(e) = stream.write_all(&ACCEPT).await {
+
+    // Send accept using an encrypted message.
+    if let Err(e) = send_encrypted_message(&mut stream, &session_key, &ACCEPT).await {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
             error: format!("Failed to send accept: {e}"),
         });
-        return Err(e.into());
+        return Err(e);
     }
 
-    log::debug!("Starting to receive zip data for transfer {transfer_id}...");
+    log::debug!("Starting to receive encrypted zip data for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Receiving..."));
-    let mut received: u64 = 0;
-    let mut last_reported: u64 = 0;
     let total = header.file_size;
-    let mut buf = vec![0u8; CHUNK_SIZE];
     // tempfile() is a blocking syscall; use spawn_blocking.
     let zip_tmpfile = spawn_blocking(tempfile)
         .await
         .context("Tempfile task panicked")?
         .context("Failed to create temporary ZIP file")?;
     let mut zip_file = tokio::fs::File::from_std(zip_tmpfile);
+    let mut received: u64 = 0;
+    let mut last_reported: u64 = 0;
     let mut cs = checksum_new();
+    // Per-session monotonic timestamp counter for replay-attack prevention.
+    let mut last_ts_us: u64 = 0;
+
+    // Receive encrypted chunks.
     loop {
         if received >= total {
             break;
         }
-
-        let to_read = std::cmp::min(CHUNK_SIZE as u64, total - received) as usize;
-        match timeout(CHUNK_RECEIVE_TIMEOUT, stream.read(&mut buf[..to_read])).await {
-            Ok(Ok(0)) => break,
-            Ok(Ok(n)) => {
-                cs.update(&buf[..n]);
-                zip_file.write_all(&buf[..n]).await?;
-                received += n as u64;
-                if received - last_reported >= PROGRESS_REPORT_INTERVAL || received >= total {
-                    last_reported = received;
-                    let _ = event_tx.send(TransferEvent::Progress {
-                        transfer_id,
-                        bytes_transferred: received,
-                        total,
-                    });
-                }
-            }
+        let chunk = match timeout(
+            CHUNK_RECEIVE_TIMEOUT,
+            recv_encrypted_message(&mut stream, &session_key, &mut last_ts_us),
+        )
+        .await
+        {
+            Ok(Ok(c)) if c.is_empty() => break,
+            Ok(Ok(c)) => c,
             Ok(Err(e)) => {
                 let _ = event_tx.send(TransferEvent::Failed {
                     transfer_id,
                     error: format!("Read error: {e}"),
                 });
-                return Err(e.into());
+                return Err(e);
             }
-            Err(_elapsed) => {
+            Err(_) => {
                 let _ = event_tx.send(TransferEvent::Failed {
                     transfer_id,
                     error: "Transfer timed out: no data received".to_string(),
                 });
                 return Err(err!("Transfer timed out: no data received"));
             }
+        };
+        cs.update(&chunk);
+        zip_file.write_all(&chunk).await?;
+        received += chunk.len() as u64;
+        if received - last_reported >= PROGRESS_REPORT_INTERVAL || received >= total {
+            last_reported = received;
+            let _ = event_tx.send(TransferEvent::Progress {
+                transfer_id,
+                bytes_transferred: received,
+                total,
+            });
         }
     }
 
@@ -560,6 +666,8 @@ pub async fn send_path(
     target_addr: SocketAddr,
     path: PathBuf,
     sender_name: String,
+    peer_rsa_pub_key: RsaPublicKey,
+    session_password: SessionPassword,
     transfer_id: u64,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
 ) -> ah::Result<()> {
@@ -630,7 +738,28 @@ pub async fn send_path(
         }
     };
 
-    log::debug!("Sending header for transfer {transfer_id}...");
+    // --- Crypto handshake (as initiator) ---
+    send_status(&event_tx, transfer_id, Some("Handshaking..."));
+    let session_key = match perform_handshake_as_initiator(
+        &mut stream,
+        peer_rsa_pub_key,
+        session_password,
+        transfer_id,
+        &event_tx,
+    )
+    .await
+    {
+        Ok(k) => k,
+        Err(e) => {
+            let _ = event_tx.send(TransferEvent::SendFailed {
+                transfer_id,
+                error: format!("Handshake failed: {e}"),
+            });
+            return Err(e);
+        }
+    };
+
+    log::debug!("Sending encrypted header for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Sending header..."));
     let header = TransferHeader::new(&name, zip_size, &sender_name, payload_checksum)?;
     let header_bytes = match header.serialize() {
@@ -643,48 +772,31 @@ pub async fn send_path(
             return Err(e);
         }
     };
-    if let Err(e) = stream.write_all(&header_bytes).await {
+    if let Err(e) = send_encrypted_message(&mut stream, &session_key, &header_bytes).await {
         let _ = event_tx.send(TransferEvent::SendFailed {
             transfer_id,
             error: format!("Failed to send header: {e}"),
         });
-        return Err(e.into());
+        return Err(e);
     }
 
     log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Waiting for response..."));
-    let mut response_buf = [0u8; 2];
-    match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
-        Ok(Ok(_)) => match response_buf {
-            ACCEPT => (),
-            REJECT => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: "Transfer rejected by receiver".to_string(),
-                });
-                return Err(err!("Transfer rejected by receiver"));
-            }
-            _ => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: "Invalid response from receiver".to_string(),
-                });
-                return Err(err!("Invalid response from receiver"));
-            }
-        },
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: "Connection closed before response".to_string(),
-            });
-            return Err(err!("Connection closed before response"));
-        }
+    // Per-session monotonic timestamp counter for replay-attack prevention.
+    let mut last_ts_us: u64 = 0;
+    let response = match timeout(
+        RESPONSE_TIMEOUT,
+        recv_encrypted_message(&mut stream, &session_key, &mut last_ts_us),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: format!("Error reading response: {e}"),
             });
-            return Err(e.into());
+            return Err(e);
         }
         Err(_) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
@@ -693,9 +805,27 @@ pub async fn send_path(
             });
             return Err(err!("Timed out waiting for response"));
         }
+    };
+
+    match response.as_slice() {
+        r if r == ACCEPT => (),
+        r if r == REJECT => {
+            let _ = event_tx.send(TransferEvent::SendFailed {
+                transfer_id,
+                error: "Transfer rejected by receiver".to_string(),
+            });
+            return Err(err!("Transfer rejected by receiver"));
+        }
+        _ => {
+            let _ = event_tx.send(TransferEvent::SendFailed {
+                transfer_id,
+                error: "Invalid response from receiver".to_string(),
+            });
+            return Err(err!("Invalid response from receiver"));
+        }
     }
 
-    log::debug!("Starting zip stream for transfer {transfer_id}...");
+    log::debug!("Starting encrypted zip stream for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Sending..."));
     let total = zip_size;
     let mut sent: u64 = 0;
@@ -713,12 +843,12 @@ pub async fn send_path(
                 return Err(e.into());
             }
         };
-        if let Err(e) = stream.write_all(&send_buf[..n]).await {
+        if let Err(e) = send_encrypted_message(&mut stream, &session_key, &send_buf[..n]).await {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,
                 error: format!("Send error: {e}"),
             });
-            return Err(e.into());
+            return Err(e);
         }
         sent += n as u64;
         if sent - last_reported >= PROGRESS_REPORT_INTERVAL || sent >= total {
