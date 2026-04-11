@@ -13,6 +13,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+#[cfg(target_os = "android")]
+use tempfile::tempdir;
 use tempfile::tempfile;
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -21,6 +23,9 @@ use tokio::{
     time::timeout,
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+#[cfg(target_os = "android")]
+use crate::android_interface::android_copy_folder_to_tree;
 
 /// Transfer chunk size for reading/writing file data.
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -67,7 +72,7 @@ async fn add_to_zip(
             let path = entry.path();
             let rel = path.strip_prefix(base)?;
             if path.is_dir() {
-                zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;  
+                zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;
             }
             Box::pin(add_to_zip(zip, options, base, &path)).await?;
         }
@@ -117,6 +122,15 @@ async fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+async fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
+    let temp_dir = tempdir().context("Failed to create temporary extraction directory")?;
+    let save_path = temp_dir.path();
+    extract_zip(file, save_path).await?;
+    android_copy_folder_to_tree(tree_uri, save_path)
+        .context("Failed to copy extracted files to selected Android folder")
 }
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
@@ -450,7 +464,23 @@ async fn receive_file(
     send_status(&event_tx, transfer_id, Some("Extracting..."));
     zip_file.seek(SeekFrom::Start(0)).await?;
     let save_path_clone = save_path.clone();
-    if let Err(e) = extract_zip(zip_file.into_std().await, &save_path_clone).await {
+    let extraction_result = if let Some(path_str) = save_path_clone.to_str() {
+        if path_str.starts_with("content://") {
+            #[cfg(target_os = "android")]
+            {
+                extract_zip_to_android_tree(zip_file.into_std().await, path_str).await
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                extract_zip(zip_file.into_std().await, &save_path_clone).await
+            }
+        } else {
+            extract_zip(zip_file.into_std().await, &save_path_clone).await
+        }
+    } else {
+        extract_zip(zip_file.into_std().await, &save_path_clone).await
+    };
+    if let Err(e) = extraction_result {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
             error: format!("Extraction failed: {e}"),

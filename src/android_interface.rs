@@ -1,4 +1,5 @@
 use crate::l10n::Language;
+use anyhow as ah;
 use std::path::PathBuf;
 
 /// Retrieve file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
@@ -135,7 +136,7 @@ pub async fn android_pick_save_folder(_lang: Language) -> Option<PathBuf> {
             let class = env.get_object_class(&activity)?;
             let result = env.call_static_method(
                 &class,
-                ::jni::jni_str!("pickFolder"),
+                ::jni::jni_str!("pickSaveFolder"),
                 ::jni::jni_sig!("()Ljava/lang/String;"),
                 &[],
             )?;
@@ -151,4 +152,36 @@ pub async fn android_pick_save_folder(_lang: Language) -> Option<PathBuf> {
     })
     .await
     .ok()?
+}
+
+pub fn android_copy_folder_to_tree(
+    tree_uri: &str,
+    source_path: &std::path::Path,
+) -> ah::Result<()> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
+    let tree_uri = tree_uri.to_string();
+    let source = source_path.to_string_lossy().to_string();
+    vm.attach_current_thread(|env| -> Result<(), ::jni::errors::Error> {
+        let activity = unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+        let class = env.get_object_class(&activity)?;
+        let tree_jstr = env.new_string(tree_uri)?;
+        let src_jstr = env.new_string(source)?;
+        let tree_obj = ::jni::objects::JObject::from(tree_jstr);
+        let src_obj = ::jni::objects::JObject::from(src_jstr);
+        let result = env.call_static_method(
+            &class,
+            ::jni::jni_str!("copyFolderToTree"),
+            ::jni::jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+            &[
+                ::jni::objects::JValue::Object(&tree_obj),
+                ::jni::objects::JValue::Object(&src_obj),
+            ],
+        )?;
+        if !result.z()? {
+            return Err(::jni::errors::Error::JavaException);
+        }
+        Ok(())
+    })?;
+    Ok(())
 }

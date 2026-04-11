@@ -254,6 +254,137 @@ class MainActivity : WryActivity() {
             return copyTreeUriToCache(activity, uri)
         }
 
+        @JvmStatic
+        fun pickSaveFolder(): String? {
+            val activity = instance ?: return null
+            val latch = CountDownLatch(1)
+            val resultUri = AtomicReference<Uri?>()
+
+            Handler(Looper.getMainLooper()).post {
+                val key = "rust_save_folder_picker_${System.nanoTime()}"
+                val launcher = activity.activityResultRegistry.register(
+                    key,
+                    ActivityResultContracts.StartActivityForResult()
+                ) { result: ActivityResult ->
+                    if (result.resultCode == Activity.RESULT_OK) {
+                        resultUri.set(result.data?.data)
+                    }
+                    latch.countDown()
+                }
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                try {
+                    launcher.launch(intent)
+                } catch (e: Exception) {
+                    latch.countDown()
+                }
+            }
+
+            latch.await()
+            val uri = resultUri.get() ?: return null
+            activity.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            return uri.toString()
+        }
+
+        @JvmStatic
+        fun copyFolderToTree(treeUriString: String, sourcePath: String): Boolean {
+            val activity = instance ?: return false
+            return try {
+                val treeUri = Uri.parse(treeUriString)
+                val docId = DocumentsContract.getTreeDocumentId(treeUri)
+                val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                copyDirectoryContentsToTree(activity, treeUri, rootDocUri, File(sourcePath))
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        private fun copyDirectoryContentsToTree(
+            activity: Activity,
+            treeUri: Uri,
+            parentDocUri: Uri,
+            srcDir: File,
+        ): Boolean {
+            if (!srcDir.isDirectory) return false
+            srcDir.listFiles()?.forEach { file ->
+                if (file.isDirectory) {
+                    val dirUri = findOrCreateDirectory(activity, treeUri, parentDocUri, file.name)
+                        ?: return false
+                    if (!copyDirectoryContentsToTree(activity, treeUri, dirUri, file)) return false
+                } else {
+                    if (!copyFileToTree(activity, treeUri, parentDocUri, file)) return false
+                }
+            }
+            return true
+        }
+
+        private fun findOrCreateDirectory(
+            activity: Activity,
+            treeUri: Uri,
+            parentDocUri: Uri,
+            displayName: String,
+        ): Uri? {
+            queryChildDocument(activity, treeUri, parentDocUri, displayName)?.let { return it }
+            return DocumentsContract.createDocument(
+                activity.contentResolver,
+                parentDocUri,
+                DocumentsContract.Document.MIME_TYPE_DIR,
+                displayName,
+            )
+        }
+
+        private fun copyFileToTree(
+            activity: Activity,
+            treeUri: Uri,
+            parentDocUri: Uri,
+            srcFile: File,
+        ): Boolean {
+            val fileUri = queryChildDocument(activity, treeUri, parentDocUri, srcFile.name)
+                ?: DocumentsContract.createDocument(
+                    activity.contentResolver,
+                    parentDocUri,
+                    "application/octet-stream",
+                    srcFile.name,
+                )
+                ?: return false
+            activity.contentResolver.openOutputStream(fileUri, "w")?.use { output ->
+                srcFile.inputStream().use { input -> input.copyTo(output) }
+            } ?: return false
+            return true
+        }
+
+        private fun queryChildDocument(
+            activity: Activity,
+            treeUri: Uri,
+            parentDocUri: Uri,
+            displayName: String,
+        ): Uri? {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getDocumentId(parentDocUri),
+            )
+            val projection = arrayOf(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            )
+            activity.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(
+                            cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                        ) == displayName
+                    ) {
+                        val documentId = cursor.getString(
+                            cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                        )
+                        return DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+                    }
+                }
+            }
+            return null
+        }
+
         private fun copyTreeUriToCache(activity: Activity, treeUri: Uri): String? {
             copyStatusMessage = "Caching folder..."
             return try {

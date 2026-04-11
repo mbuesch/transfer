@@ -6,6 +6,8 @@
 -keepclassmembers class dev.dioxus.main.MainActivity {
     public static java.lang.String   pickFile();
     public static java.lang.String   pickFolder();
+    public static java.lang.String   pickSaveFolder();
+    public static boolean            copyFolderToTree(java.lang.String, java.lang.String);
     public static java.lang.String[] getSharedFiles();
     public static void               clearSharedFiles();
     public static java.lang.String   getCopyStatus();
