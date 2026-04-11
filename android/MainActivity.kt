@@ -24,7 +24,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
-typealias BuildConfig = BuildConfig
+typealias BuildConfig = BuildConfig // re-export
 
 class MainActivity : WryActivity() {
 
@@ -87,13 +87,13 @@ class MainActivity : WryActivity() {
     private fun acquireWifiLocks() {
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: return
-        if (multicastLock == null || multicastLock?.isHeld == false) {
+        if (multicastLock?.isHeld != true) {
             multicastLock = wifiManager.createMulticastLock("transfer_multicast").also {
                 it.setReferenceCounted(false)
                 it.acquire()
             }
         }
-        if (wifiLock == null || wifiLock?.isHeld == false) {
+        if (wifiLock?.isHeld != true) {
             @Suppress("DEPRECATION")
             val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 WifiManager.WIFI_MODE_FULL_LOW_LATENCY
@@ -141,7 +141,7 @@ class MainActivity : WryActivity() {
         }
 
     companion object {
-        @JvmStatic
+        @JvmStatic @Volatile
         var instance: MainActivity? = null
 
         @Volatile private var copyStatusMessage: String? = null
@@ -288,7 +288,8 @@ class MainActivity : WryActivity() {
             srcDir: File,
         ): Boolean {
             if (!srcDir.isDirectory) return false
-            srcDir.listFiles()?.forEach { file ->
+            val files = srcDir.listFiles() ?: return false
+            files.forEach { file ->
                 if (file.isDirectory) {
                     val dirUri = findOrCreateDirectory(activity, treeUri, parentDocUri, file.name)
                         ?: return false
