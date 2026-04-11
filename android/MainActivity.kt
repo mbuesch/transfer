@@ -1,6 +1,6 @@
-package dev.dioxus.main;
+package dev.dioxus.main
 
-import ch.bues.Transfer.BuildConfig;
+import ch.bues.Transfer.BuildConfig
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -16,13 +16,15 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
-typealias BuildConfig = BuildConfig;
+typealias BuildConfig = BuildConfig
 
 class MainActivity : WryActivity() {
 
@@ -58,34 +60,12 @@ class MainActivity : WryActivity() {
     }
 
     private fun handleShareIntent(intent: Intent?) {
-        if (intent == null) return
-        val uris: List<Uri> = when (intent.action) {
-            Intent.ACTION_SEND -> {
-                val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
-                }
-                listOfNotNull(uri)
-            }
-            Intent.ACTION_SEND_MULTIPLE -> {
-                val list: List<Uri>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
-                }
-                list ?: emptyList()
-            }
-            else -> return
-        }
+        val uris = getShareUris(intent)
         if (uris.isEmpty()) return
-        val activity = this
+
         Thread {
             for (uri in uris) {
-                val path = copyUriToCache(activity, uri)
-                if (path != null) {
+                copyUriToCache(this, uri)?.let { path ->
                     synchronized(sharedFiles) {
                         sharedFiles.add(path)
                     }
@@ -132,6 +112,34 @@ class MainActivity : WryActivity() {
         wifiLock?.takeIf { it.isHeld }?.release()
     }
 
+    private fun getShareUris(intent: Intent?): List<Uri> {
+        if (intent == null) return emptyList()
+        return when (intent.action) {
+            Intent.ACTION_SEND -> intent.getParcelableExtraCompat(Intent.EXTRA_STREAM)
+                ?.let(::listOf)
+                .orEmpty()
+            Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtraCompat(Intent.EXTRA_STREAM)
+                ?: emptyList()
+            else -> emptyList()
+        }
+    }
+
+    private fun Intent.getParcelableExtraCompat(name: String): Uri? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(name, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(name) as? Uri
+        }
+
+    private fun Intent.getParcelableArrayListExtraCompat(name: String): ArrayList<Uri>? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableArrayListExtra(name, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION", "UNCHECKED_CAST")
+            getParcelableArrayListExtra<Uri>(name) as? ArrayList<Uri>
+        }
+
     companion object {
         @JvmStatic
         var instance: MainActivity? = null
@@ -160,36 +168,72 @@ class MainActivity : WryActivity() {
         @JvmStatic
         fun pickFile(): String? {
             val activity = instance ?: return null
+            return awaitActivityResult(activity,
+                createIntent = {
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                    }
+                }
+            ) { data -> data?.data?.let { copyUriToCache(activity, it) } }
+        }
+
+        @JvmStatic
+        fun pickFolder(): String? {
+            val activity = instance ?: return null
+            return pickTreeUri(activity)?.let { copyTreeUriToCache(activity, it) }
+        }
+
+        @JvmStatic
+        fun pickSaveFolder(): String? {
+            val activity = instance ?: return null
+            val uri = pickTreeUri(activity) ?: return null
+            activity.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            return uri.toString()
+        }
+
+        private fun pickTreeUri(activity: ComponentActivity): Uri? =
+            awaitActivityResult(activity, createIntent = { Intent(Intent.ACTION_OPEN_DOCUMENT_TREE) }) { data ->
+                data?.data
+            }
+
+        private fun <T> awaitActivityResult(
+            activity: ComponentActivity,
+            createIntent: () -> Intent,
+            handleResult: (Intent?) -> T?,
+        ): T? {
+            if (Looper.myLooper() == Looper.getMainLooper()) return null
+
             val latch = CountDownLatch(1)
-            val resultUri = AtomicReference<Uri?>()
+            val resultRef = AtomicReference<T?>()
+            val key = "rust_activity_${System.nanoTime()}"
 
             Handler(Looper.getMainLooper()).post {
-                val key = "rust_file_picker_${System.nanoTime()}"
-                val launcher = activity.activityResultRegistry.register(
+                lateinit var launcher: ActivityResultLauncher<Intent>
+                launcher = activity.activityResultRegistry.register(
                     key,
                     ActivityResultContracts.StartActivityForResult()
                 ) { result: ActivityResult ->
                     if (result.resultCode == Activity.RESULT_OK) {
-                        resultUri.set(result.data?.data)
+                        resultRef.set(handleResult(result.data))
                     }
                     latch.countDown()
+                    launcher.unregister()
                 }
 
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                }
                 try {
-                    launcher.launch(intent)
-                } catch (e: Exception) {
+                    launcher.launch(createIntent())
+                } catch (_: Exception) {
                     latch.countDown()
+                    launcher.unregister()
                 }
             }
 
             latch.await()
-
-            val uri = resultUri.get() ?: return null
-            return copyUriToCache(activity, uri)
+            return resultRef.get()
         }
 
         private fun copyUriToCache(activity: Activity, uri: Uri): String? {
@@ -222,70 +266,6 @@ class MainActivity : WryActivity() {
                 }
             }
             return uri.lastPathSegment
-        }
-
-        @JvmStatic
-        fun pickFolder(): String? {
-            val activity = instance ?: return null
-            val latch = CountDownLatch(1)
-            val resultUri = AtomicReference<Uri?>()
-
-            Handler(Looper.getMainLooper()).post {
-                val key = "rust_folder_picker_${System.nanoTime()}"
-                val launcher = activity.activityResultRegistry.register(
-                    key,
-                    ActivityResultContracts.StartActivityForResult()
-                ) { result: ActivityResult ->
-                    if (result.resultCode == Activity.RESULT_OK) {
-                        resultUri.set(result.data?.data)
-                    }
-                    latch.countDown()
-                }
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                try {
-                    launcher.launch(intent)
-                } catch (e: Exception) {
-                    latch.countDown()
-                }
-            }
-
-            latch.await()
-            val uri = resultUri.get() ?: return null
-            return copyTreeUriToCache(activity, uri)
-        }
-
-        @JvmStatic
-        fun pickSaveFolder(): String? {
-            val activity = instance ?: return null
-            val latch = CountDownLatch(1)
-            val resultUri = AtomicReference<Uri?>()
-
-            Handler(Looper.getMainLooper()).post {
-                val key = "rust_save_folder_picker_${System.nanoTime()}"
-                val launcher = activity.activityResultRegistry.register(
-                    key,
-                    ActivityResultContracts.StartActivityForResult()
-                ) { result: ActivityResult ->
-                    if (result.resultCode == Activity.RESULT_OK) {
-                        resultUri.set(result.data?.data)
-                    }
-                    latch.countDown()
-                }
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                try {
-                    launcher.launch(intent)
-                } catch (e: Exception) {
-                    latch.countDown()
-                }
-            }
-
-            latch.await()
-            val uri = resultUri.get() ?: return null
-            activity.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            return uri.toString()
         }
 
         @JvmStatic
