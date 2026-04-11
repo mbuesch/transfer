@@ -1,15 +1,16 @@
 # File Transfer App
 
-## Implementation process
+## Implementation process guideline
 
+- Following the implementation process guideline is **MANDATORY**.
 - When implementing, always think carefully and do not take shortcuts.
 - When unsure, ask rather than guess.
 - Never use the character `—`; use `-` instead.
-- Use `vec![]` instead of `Vec::new()`.
-- When cloning an `Arc`, use `Arc::clone(&arc)` instead of `arc.clone()`.
-- When using multiple items from the same crate, prefer a single `use` statement with curly braces.
-- `mod` statements shall come after `use` statements.
-- `use` statements shall be at the top of the file.
+- Always use `vec![]` instead of `Vec::new()`.
+- When cloning an `Arc`, always use `Arc::clone(&arc)` instead of `arc.clone()`.
+- When using multiple items from the same crate, always prefer a single `use` statement with curly braces.
+- `mod` statements shall always come after `use` statements.
+- `use` statements shall always be at the top of the file. Never put `use` statements in the middle of a function or block.
 - Generally avoid `unwrap()`.
 - When unwrapping a lock guard, use `expect("Lock poisoned")` instead of `unwrap()`.
 - Prefer `use` statements to bring crate paths into scope rather than using crate-root paths directly.
@@ -18,10 +19,12 @@
   Use `anyhow::format_err` as `err`.
   Use `return Err(err!("..."))` instead of `bail!("...")` or `return Err(anyhow!("..."))`.
 - At the end of a function to not use `return` for returning a value; just use the value as the last expression.
-- Always run `cargo clippy` after making changes and address warnings; prefer clippy over relying solely on `cargo build`.
-- After changing code, run `cargo fmt` to ensure consistent formatting.
-- After changing Dioxus code, run `dx fmt` to ensure consistent formatting.
-- After changing anything Android/Kotlin/Java related, run `android-build.sh`.
+
+## Checks after making changes
+
+- **MANDATORY:** Always run `cargo clippy` after making changes and address warnings; prefer clippy over relying solely on `cargo build`.
+- **MANDATORY:** After changing code, run `cargo fmt && dx fmt` to ensure consistent formatting.
+- **MANDATORY:** After changing anything Android/Kotlin/Java related, run `android-build.sh`.
 
 ## Crate versions
 
