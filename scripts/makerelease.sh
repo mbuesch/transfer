@@ -37,7 +37,7 @@ hook_post_archives()
     ./android-build.sh
     local android="transfer-android-aarch64-$version"
     mkdir "./$android"
-    cp "./transfer-release-aarch64-signed.apk" "./$android/"
+    cp "./transfer-aarch64.apk" "./$android/"
     cp "./android-install.sh" "./$android/"
     tar cJf "./$android.tar.xz" \
         --numeric-owner --owner=0 --group=0 \
