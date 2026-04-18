@@ -46,43 +46,45 @@ const REJECT: [u8; 2] = [0x22, 0x22 ^ 0xFF];
 
 /// Pack a file or directory into an anonymous temporary zip file.
 /// Returns the file (seeked to the start) and the zip size in bytes.
-async fn pack_to_zip(path: &Path) -> ah::Result<(File, u64)> {
+///
+/// This is a blocking function - call via `tokio::task::spawn_blocking`.
+fn pack_to_zip(path: &Path) -> ah::Result<(File, u64)> {
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Zstd)
         .compression_level(Some(COMPRESSION_LEVEL));
     let zip_tmpfile = tempfile().context("Failed to create temporary ZIP file")?;
     let mut zip = ZipWriter::new(zip_tmpfile);
     let base = path.parent().unwrap_or_else(|| Path::new("."));
-    add_to_zip(&mut zip, options, base, path).await?;
+    add_to_zip(&mut zip, options, base, path)?;
     let mut zip_tmpfile = zip.finish()?;
     let size = zip_tmpfile.stream_position()?;
     zip_tmpfile.seek(SeekFrom::Start(0))?;
     Ok((zip_tmpfile, size))
 }
 
-async fn add_to_zip(
+fn add_to_zip(
     zip: &mut ZipWriter<File>,
     options: SimpleFileOptions,
     base: &Path,
     entry: &Path,
 ) -> ah::Result<()> {
     if entry.is_dir() {
-        let mut dir_entries = tokio::fs::read_dir(entry).await?;
-        while let Some(entry) = dir_entries.next_entry().await? {
-            let path = entry.path();
+        for dir_entry in std::fs::read_dir(entry)? {
+            let dir_entry = dir_entry?;
+            let path = dir_entry.path();
             let rel = path.strip_prefix(base)?;
             if path.is_dir() {
                 zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;
             }
-            Box::pin(add_to_zip(zip, options, base, &path)).await?;
+            add_to_zip(zip, options, base, &path)?;
         }
     } else {
         let rel = entry.strip_prefix(base)?;
         zip.start_file(rel.to_string_lossy(), options)?;
-        let mut file = tokio::fs::File::open(entry).await?;
+        let mut file = File::open(entry)?;
         let mut buf = vec![0u8; CHUNK_SIZE];
         loop {
-            let n = file.read(&mut buf).await?;
+            let n = file.read(&mut buf)?;
             if n == 0 {
                 break;
             }
@@ -94,7 +96,9 @@ async fn add_to_zip(
 
 /// Extracts a zip archive from a temporary file into `save_path`.
 /// Skips entries with unsafe (path-traversal) names.
-async fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
+///
+/// This is a blocking function - call via `tokio::task::spawn_blocking`.
+fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
     let mut archive = zip::ZipArchive::new(file)?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -104,20 +108,20 @@ async fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
         };
         let out_path = save_path.join(rel_path);
         if file.is_dir() {
-            tokio::fs::create_dir_all(&out_path).await?;
+            std::fs::create_dir_all(&out_path)?;
         } else {
             if let Some(parent) = out_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
+                std::fs::create_dir_all(parent)?;
             }
-            let out_path = find_available_path(&out_path).await?;
-            let mut out_file = tokio::fs::File::create(&out_path).await?;
+            let out_path = find_available_path(&out_path)?;
+            let mut out_file = File::create(&out_path)?;
             let mut buf = vec![0u8; CHUNK_SIZE];
             loop {
                 let n = file.read(&mut buf)?;
                 if n == 0 {
                     break;
                 }
-                out_file.write_all(&buf[..n]).await?;
+                out_file.write_all(&buf[..n])?;
             }
         }
     }
@@ -125,10 +129,10 @@ async fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
 }
 
 #[cfg(target_os = "android")]
-async fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
+fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
     let temp_dir = tempdir().context("Failed to create temporary extraction directory")?;
     let save_path = temp_dir.path();
-    extract_zip(file, save_path).await?;
+    extract_zip(file, save_path)?;
     android_copy_folder_to_tree(tree_uri, save_path)
         .context("Failed to copy extracted files to selected Android folder")
 }
@@ -325,8 +329,8 @@ async fn handle_incoming_connection(
 /// If the original file doesn't exist, returns it as-is.
 /// Otherwise, tries filename (1), filename (2), etc. until finding an available name.
 /// Returns an error if unable to find an available name.
-async fn find_available_path(file_path: &PathBuf) -> ah::Result<PathBuf> {
-    if tokio::fs::metadata(file_path).await.is_err() {
+fn find_available_path(file_path: &PathBuf) -> ah::Result<PathBuf> {
+    if std::fs::metadata(file_path).is_err() {
         // File doesn't exist, safe to use original path
         return Ok(file_path.clone());
     }
@@ -353,7 +357,7 @@ async fn find_available_path(file_path: &PathBuf) -> ah::Result<PathBuf> {
         let new_name = format!("{base_name} ({i}){extension}");
         let new_path = parent.join(&new_name);
 
-        if tokio::fs::metadata(&new_path).await.is_err() {
+        if std::fs::metadata(&new_path).is_err() {
             return Ok(new_path);
         }
     }
@@ -463,23 +467,28 @@ async fn receive_file(
     log::debug!("Extracting zip for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Extracting..."));
     zip_file.seek(SeekFrom::Start(0)).await?;
+    let zip_std_file = zip_file.into_std().await;
     let save_path_clone = save_path.clone();
-    let extraction_result = if let Some(path_str) = save_path_clone.to_str() {
-        if path_str.starts_with("content://") {
-            #[cfg(target_os = "android")]
-            {
-                extract_zip_to_android_tree(zip_file.into_std().await, path_str).await
-            }
-            #[cfg(not(target_os = "android"))]
-            {
-                extract_zip(zip_file.into_std().await, &save_path_clone).await
+    let extraction_result = tokio::task::spawn_blocking(move || {
+        if let Some(path_str) = save_path_clone.to_str() {
+            if path_str.starts_with("content://") {
+                #[cfg(target_os = "android")]
+                {
+                    extract_zip_to_android_tree(zip_std_file, path_str)
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    extract_zip(zip_std_file, &save_path_clone)
+                }
+            } else {
+                extract_zip(zip_std_file, &save_path_clone)
             }
         } else {
-            extract_zip(zip_file.into_std().await, &save_path_clone).await
+            extract_zip(zip_std_file, &save_path_clone)
         }
-    } else {
-        extract_zip(zip_file.into_std().await, &save_path_clone).await
-    };
+    })
+    .await
+    .context("Extraction task panicked")?;
     if let Err(e) = extraction_result {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
@@ -517,16 +526,20 @@ pub async fn send_path(
     log::debug!("Packing {:?} for transfer {transfer_id}", path.display());
     send_status(&event_tx, transfer_id, Some("Packing..."));
     let path_clone = path.clone();
-    let (zip_std_file, zip_size) = match pack_to_zip(&path_clone).await {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: format!("Failed to pack: {e}"),
-            });
-            return Err(e);
-        }
-    };
+    let (zip_std_file, zip_size) =
+        match tokio::task::spawn_blocking(move || pack_to_zip(&path_clone))
+            .await
+            .context("Pack task panicked")?
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = event_tx.send(TransferEvent::SendFailed {
+                    transfer_id,
+                    error: format!("Failed to pack: {e}"),
+                });
+                return Err(e);
+            }
+        };
     if zip_size == 0 {
         let _ = event_tx.send(TransferEvent::SendFailed {
             transfer_id,
@@ -537,20 +550,24 @@ pub async fn send_path(
 
     log::debug!("Calculating checksum for transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Calculating checksum..."));
-    let mut zip_file = tokio::fs::File::from_std(zip_std_file);
-    let payload_checksum = {
+    let (zip_std_file, payload_checksum) = tokio::task::spawn_blocking(move || -> ah::Result<_> {
+        let mut zip_std_file = zip_std_file;
         let mut cs = checksum_new();
         let mut ck_buf = vec![0u8; CHUNK_SIZE];
         loop {
-            let n = zip_file.read(&mut ck_buf).await?;
+            let n = zip_std_file.read(&mut ck_buf)?;
             if n == 0 {
                 break;
             }
             cs.update(&ck_buf[..n]);
         }
-        cs.finalize().to_le_bytes()
-    };
-    zip_file.seek(SeekFrom::Start(0)).await?;
+        let checksum = cs.finalize().to_le_bytes();
+        zip_std_file.seek(SeekFrom::Start(0))?;
+        Ok((zip_std_file, checksum))
+    })
+    .await
+    .context("Checksum task panicked")??;
+    let mut zip_file = tokio::fs::File::from_std(zip_std_file);
 
     log::debug!(
         "Connecting to {} for transfer {transfer_id}...",
