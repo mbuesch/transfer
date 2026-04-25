@@ -1,4 +1,5 @@
 use crate::app::App;
+use anyhow as ah;
 use dioxus::desktop::{Config, WindowBuilder};
 
 #[cfg(not(target_os = "android"))]
@@ -60,7 +61,7 @@ fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     dioxus::desktop::tao::window::Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
-fn main() {
+fn main() -> ah::Result<()> {
     env_logger::init();
 
     #[cfg(not(target_os = "android"))]
@@ -94,7 +95,12 @@ fn main() {
 
     let config = Config::new().with_window(window).with_menu(None);
 
-    dioxus::LaunchBuilder::desktop()
-        .with_cfg(config)
-        .launch(App);
+    #[cfg(target_os = "android")]
+    let builder = dioxus::LaunchBuilder::mobile();
+    #[cfg(not(target_os = "android"))]
+    let builder = dioxus::LaunchBuilder::desktop();
+
+    builder.with_cfg(config).launch(App);
+
+    Ok(())
 }
