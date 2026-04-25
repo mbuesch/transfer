@@ -41,6 +41,7 @@ panic = "abort"
 [profile.release]
 lto = "fat"
 panic = "abort"
+overflow-checks = true
 
 [features]
 default = [ "ipv4", "ipv6" ]
