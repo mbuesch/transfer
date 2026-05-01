@@ -234,7 +234,10 @@ async fn update_device(
     Ok(())
 }
 
-pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &DeviceMap) {
+/// Waits for one discovery packet and processes it.
+/// Returns `true` if the socket is healthy (packet received or ignored),
+/// `false` on a socket-level I/O error (caller should recreate the socket).
+pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &DeviceMap) -> bool {
     let mut buf = [0u8; DiscoveryPacket::size()];
     match socket.recv_from(&mut buf).await {
         Ok((len, addr)) => {
@@ -244,7 +247,7 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
                         log::warn!(
                             "Discovery packet from {addr} failed checksum verification - discarding"
                         );
-                        return;
+                        return true;
                     }
                     if let Err(e) = update_device(devices, packet, addr).await {
                         log::debug!("Failed to update device: {e}");
@@ -255,9 +258,11 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
                     log::debug!("Failed to deserialize discovery packet from {addr}: {e}");
                 }
             }
+            true
         }
         Err(e) => {
             log::debug!("Discovery recv error: {e}");
+            false
         }
     }
 }

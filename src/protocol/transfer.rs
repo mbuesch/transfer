@@ -20,7 +20,8 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Mutex, mpsc},
-    time::timeout,
+    task::JoinSet,
+    time::{sleep, timeout},
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -39,6 +40,9 @@ const CHUNK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const HEADER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Overall timeout for waiting for a response from the receiver after sending the header.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a pending (awaiting user accept/reject) transfer is kept alive.
+/// Slightly longer than RESPONSE_TIMEOUT so the sender's own timeout fires first.
+const PENDING_TIMEOUT: Duration = Duration::from_secs(125);
 /// Accept response.
 const ACCEPT: [u8; 2] = [0x11, 0x11 ^ 0xFF];
 /// Reject response.
@@ -198,6 +202,10 @@ pub async fn run_transfer_server(
 
     // Spawn acceptor task
     let accept_handle = tokio::spawn(async move {
+        // JoinSet owns all per-connection tasks. When this acceptor task is
+        // aborted (via accept_handle.abort()), the JoinSet is dropped, which
+        // aborts every tracked task in it.
+        let mut join_set: JoinSet<()> = JoinSet::new();
         let mut next_id: u64 = 1;
         loop {
             let (stream, addr) = match listener.accept().await {
@@ -213,7 +221,10 @@ pub async fn run_transfer_server(
             let transfer_id = next_id;
             next_id += 1;
 
-            tokio::spawn(async move {
+            // Reap completed tasks to avoid unbounded JoinSet growth.
+            while join_set.try_join_next().is_some() {}
+
+            join_set.spawn(async move {
                 if let Err(e) =
                     handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
                 {
@@ -309,18 +320,41 @@ async fn handle_incoming_connection(
         save_path: None,
     };
 
+    // Insert into the pending map BEFORE sending the IncomingRequest event.
+    // This prevents a race where auto-accept immediately sends AcceptTransfer
+    // and the command loop finds an empty map.
+    {
+        let mut map = pending.lock().await;
+        map.insert(
+            transfer_id,
+            PendingIncoming {
+                transfer_id,
+                header,
+                stream,
+            },
+        );
+    }
+
     let _ = event_tx.send(TransferEvent::IncomingRequest(Box::new(incoming)));
 
-    // Store pending connection
-    let mut map = pending.lock().await;
-    map.insert(
-        transfer_id,
-        PendingIncoming {
-            transfer_id,
-            header,
-            stream,
-        },
-    );
+    // Spawn an expiry task: if the transfer is neither accepted nor rejected
+    // within PENDING_TIMEOUT, close the dead connection and emit a failure
+    // event to the UI to avoid a permanent FD leak.
+    tokio::spawn({
+        let pending = Arc::clone(&pending);
+        let event_tx = event_tx.clone();
+        async move {
+            sleep(PENDING_TIMEOUT).await;
+            let mut map = pending.lock().await;
+            if map.remove(&transfer_id).is_some() {
+                // The TcpStream inside PendingIncoming is dropped here, closing the OS socket.
+                let _ = event_tx.send(TransferEvent::Failed {
+                    transfer_id,
+                    error: "Transfer timed out waiting for user response".to_string(),
+                });
+            }
+        }
+    });
 
     Ok(())
 }

@@ -451,7 +451,11 @@ async fn run_discovery_listener<F, Fut>(
                 )
                 .await
                 {
-                    Ok(()) => {}
+                    Ok(true) => {}
+                    Ok(false) => {
+                        log::debug!("{label} listener socket error, recreating socket");
+                        break;
+                    }
                     Err(_) => {
                         log::debug!("{label} listener idle for 10s, recreating socket");
                         break;
