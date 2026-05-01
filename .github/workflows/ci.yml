@@ -67,10 +67,12 @@ jobs:
       # Build
       - name: Build (Linux)
         if: matrix.os.name == 'linux'
-        run: ./desktop-build.sh
+        run: |
+          ./desktop-build-linux.sh
+          sudo ./desktop-install-linux.sh
       - name: Build (Windows)
         if: matrix.os.name == 'windows'
-        run: desktop-build.cmd
+        run: desktop-build-windows.cmd
         shell: cmd
       - name: Build (MacOS)
         if: matrix.os.name == 'macos'
