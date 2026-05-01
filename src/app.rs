@@ -61,6 +61,7 @@ pub fn App() -> Element {
     let mut outgoing_transfers: Signal<Vec<OutgoingTransfer>> = use_signal(Vec::new);
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
     let mut transfer_step_status: Signal<Option<String>> = use_signal(|| None);
+    let mut transfer_step_status_gen: Signal<u64> = use_signal(|| 0_u64);
     let mut active_tab = use_signal(|| ActiveTab::Network);
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
@@ -173,11 +174,13 @@ pub fn App() -> Element {
                         .unwrap_or_default()
                         {
                             Some(msg) => {
+                                *transfer_step_status_gen.write() += 1;
                                 transfer_step_status.set(Some(msg.clone()));
                                 prev = Some(msg.clone());
                             }
                             None if prev.is_some() => {
                                 if transfer_step_status.read().as_deref() == prev.as_deref() {
+                                    *transfer_step_status_gen.write() += 1;
                                     transfer_step_status.set(None);
                                 }
                                 prev = None;
@@ -242,6 +245,7 @@ pub fn App() -> Element {
                                 }
                             }
                             if should_purge {
+                                *transfer_step_status_gen.write() += 1;
                                 transfer_step_status.set(None);
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
@@ -260,11 +264,18 @@ pub fn App() -> Element {
                             }
                             if should_purge {
                                 let l = *lang.read();
+                                let captured_gen = {
+                                    let mut g = transfer_step_status_gen.write();
+                                    *g += 1;
+                                    *g
+                                };
                                 transfer_step_status
                                     .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
-                                    transfer_step_status.set(None);
+                                    if *transfer_step_status_gen.read() == captured_gen {
+                                        transfer_step_status.set(None);
+                                    }
                                     incoming_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
@@ -280,11 +291,18 @@ pub fn App() -> Element {
                             }
                             if should_purge {
                                 let l = *lang.read();
+                                let captured_gen = {
+                                    let mut g = transfer_step_status_gen.write();
+                                    *g += 1;
+                                    *g
+                                };
                                 transfer_step_status
                                     .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
-                                    transfer_step_status.set(None);
+                                    if *transfer_step_status_gen.read() == captured_gen {
+                                        transfer_step_status.set(None);
+                                    }
                                     incoming_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
@@ -311,6 +329,7 @@ pub fn App() -> Element {
                                     should_purge = true;
                                 }
                             }
+                            *transfer_step_status_gen.write() += 1;
                             transfer_step_status.set(None);
                             if should_purge {
                                 active_tab.set(ActiveTab::Network);
@@ -331,16 +350,24 @@ pub fn App() -> Element {
                             }
                             if should_purge {
                                 let l = *lang.read();
+                                let captured_gen = {
+                                    let mut g = transfer_step_status_gen.write();
+                                    *g += 1;
+                                    *g
+                                };
                                 transfer_step_status
                                     .set(Some(l.status_transfer_aborted().to_string()));
                                 spawn(async move {
                                     sleep(DISPLAY_TIMEOUT).await;
-                                    transfer_step_status.set(None);
+                                    if *transfer_step_status_gen.read() == captured_gen {
+                                        transfer_step_status.set(None);
+                                    }
                                     outgoing_transfers.write().retain(|t| t.id != transfer_id);
                                 });
                             }
                         }
                         TransferEvent::StatusUpdate { message, .. } => {
+                            *transfer_step_status_gen.write() += 1;
                             transfer_step_status.set(message);
                         }
                     }

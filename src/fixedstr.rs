@@ -21,7 +21,7 @@ impl<const N: usize> FixedStr<N> {
     }
 
     pub fn from_str_trunc(s: &str) -> Self {
-        let len = s.len().min(N);
+        let len = s.floor_char_boundary(N);
         let s = &s[..len];
         Self::from_str(s).expect("FixedStr: from_str failed.")
     }

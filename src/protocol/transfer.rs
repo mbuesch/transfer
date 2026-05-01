@@ -610,13 +610,6 @@ pub async fn send_path(
     send_status(&event_tx, transfer_id, Some("Waiting for response..."));
     let mut response_buf = [0u8; 2];
     match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
-        Ok(Ok(0)) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: "Connection closed before response".to_string(),
-            });
-            return Err(err!("Connection closed before response"));
-        }
         Ok(Ok(_)) => match response_buf {
             ACCEPT => (),
             REJECT => {
@@ -634,6 +627,13 @@ pub async fn send_path(
                 return Err(err!("Invalid response from receiver"));
             }
         },
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            let _ = event_tx.send(TransferEvent::SendFailed {
+                transfer_id,
+                error: "Connection closed before response".to_string(),
+            });
+            return Err(err!("Connection closed before response"));
+        }
         Ok(Err(e)) => {
             let _ = event_tx.send(TransferEvent::SendFailed {
                 transfer_id,

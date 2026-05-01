@@ -70,6 +70,7 @@ fn main() -> ah::Result<()> {
 
         let args = Args::parse();
 
+        #[cfg(all(feature = "ipv4", feature = "ipv6"))]
         if args.ipv4 && !args.ipv6 {
             IpSupport::V4.set();
         } else if args.ipv6 && !args.ipv4 {
