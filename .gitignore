@@ -1,3 +1,4 @@
+/.vscode/
 /target/
 /android-sign-release.sh
 /transfer-desktop-linux-x64
