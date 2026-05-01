@@ -208,10 +208,12 @@ pub fn App() -> Element {
                             let transfer_id = t.id;
                             incoming_transfers.write().push(*t);
                             active_tab.set(ActiveTab::Incoming);
-                            // Auto-accept if an incoming folder has been selected
-                            if let Some(folder) = auto_accept_folder.read().clone()
-                                && let Some(tx) = cmd_tx.read().as_ref()
-                            {
+                            // Auto-accept if an incoming folder has been selected.
+                            // Clone values out of their Signal guards so both guards are
+                            // dropped before calling tx.send().
+                            let folder = auto_accept_folder.read().clone();
+                            let tx = cmd_tx.read().clone();
+                            if let (Some(folder), Some(tx)) = (folder, tx) {
                                 let _ = tx.send(TransferCommand::AcceptTransfer {
                                     transfer_id,
                                     save_path: folder,

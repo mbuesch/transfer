@@ -20,7 +20,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Mutex, mpsc},
-    task::JoinSet,
+    task::{JoinSet, spawn_blocking},
     time::{sleep, timeout},
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -425,7 +425,11 @@ async fn receive_file(
     let mut last_reported: u64 = 0;
     let total = header.file_size;
     let mut buf = vec![0u8; CHUNK_SIZE];
-    let zip_tmpfile = tempfile().context("Failed to create temporary ZIP file")?;
+    // tempfile() is a blocking syscall; use spawn_blocking.
+    let zip_tmpfile = spawn_blocking(tempfile)
+        .await
+        .context("Tempfile task panicked")?
+        .context("Failed to create temporary ZIP file")?;
     let mut zip_file = tokio::fs::File::from_std(zip_tmpfile);
     let mut cs = checksum_new();
     loop {

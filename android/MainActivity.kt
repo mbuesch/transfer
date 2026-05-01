@@ -144,7 +144,7 @@ class MainActivity : WryActivity() {
         @JvmStatic @Volatile
         var instance: MainActivity? = null
 
-        @Volatile private var copyStatusMessage: String? = null
+        private val copyStatusMessage = java.util.concurrent.atomic.AtomicReference<String?>(null)
 
         private val sharedFiles = mutableListOf<String>()
 
@@ -163,7 +163,7 @@ class MainActivity : WryActivity() {
         }
 
         @JvmStatic
-        fun getCopyStatus(): String? = copyStatusMessage
+        fun getCopyStatus(): String? = copyStatusMessage.get()
 
         @JvmStatic
         fun pickFile(): String? {
@@ -237,7 +237,7 @@ class MainActivity : WryActivity() {
         }
 
         private fun copyUriToCache(activity: Activity, uri: Uri): String? {
-            copyStatusMessage = "Caching file..."
+            copyStatusMessage.set("Caching file...")
             try {
                 val inputStream = activity.contentResolver.openInputStream(uri)
                     ?: return null
@@ -252,7 +252,7 @@ class MainActivity : WryActivity() {
             } catch (e: Exception) {
                 return null
             } finally {
-                copyStatusMessage = null
+                copyStatusMessage.set(null)
             }
         }
 
@@ -367,7 +367,7 @@ class MainActivity : WryActivity() {
         }
 
         private fun copyTreeUriToCache(activity: Activity, treeUri: Uri): String? {
-            copyStatusMessage = "Caching folder..."
+            copyStatusMessage.set("Caching folder...")
             return try {
                 val folderName = getFolderDisplayName(activity, treeUri) ?: "picked_folder"
                 val destDir = File(activity.cacheDir, folderName)
@@ -380,7 +380,7 @@ class MainActivity : WryActivity() {
             } catch (e: Exception) {
                 null
             } finally {
-                copyStatusMessage = null
+                copyStatusMessage.set(null)
             }
         }
 

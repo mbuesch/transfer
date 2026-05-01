@@ -241,6 +241,14 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
     let mut buf = [0u8; DiscoveryPacket::size()];
     match socket.recv_from(&mut buf).await {
         Ok((len, addr)) => {
+            if len != DiscoveryPacket::size() {
+                log::warn!(
+                    "Discovery packet from {addr} has unexpected length {len} \
+                     (expected {}), discarding",
+                    DiscoveryPacket::size()
+                );
+                return true;
+            }
             match DiscoveryPacket::deserialize(&buf[..len]) {
                 Ok(packet) if packet.device_id() != own_id => {
                     if !packet.verify_checksum() {
