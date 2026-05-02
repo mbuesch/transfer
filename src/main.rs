@@ -62,6 +62,13 @@ fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
 }
 
 fn main() -> ah::Result<()> {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("transfer"),
+    );
+    #[cfg(not(target_os = "android"))]
     env_logger::init();
 
     #[cfg(not(target_os = "android"))]

@@ -31,6 +31,7 @@ rfd = "0.17"
 png = "0.18"
 
 [target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
 jni = "0.22"
 ndk-context = "0.1"
 
