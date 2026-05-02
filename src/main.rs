@@ -61,7 +61,8 @@ fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     dioxus::desktop::tao::window::Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
-fn main() -> ah::Result<()> {
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+async fn main() -> ah::Result<()> {
     #[cfg(target_os = "android")]
     android_logger::init_once(
         android_logger::Config::default()
