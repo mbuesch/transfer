@@ -3,6 +3,7 @@ use crate::{
     protocol::packets::{TransferHeader, checksum_new},
 };
 use anyhow::{self as ah, Context as _, format_err as err};
+use bytesize::ByteSize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
@@ -306,10 +307,10 @@ async fn handle_incoming_connection(
     }
 
     log::info!(
-        "Incoming transfer from {}: {} ({} bytes)",
+        "Incoming transfer from {}: {} ({})",
         header_sender_name,
         header_filename,
-        header.file_size
+        ByteSize(header.file_size)
     );
 
     let incoming = IncomingTransfer {
@@ -481,10 +482,16 @@ async fn receive_file(
     if received != total {
         let _ = event_tx.send(TransferEvent::Failed {
             transfer_id,
-            error: format!("Incomplete transfer: received {received} of {total} bytes"),
+            error: format!(
+                "Incomplete transfer: received {} of {}",
+                ByteSize(received),
+                ByteSize(total)
+            ),
         });
         return Err(err!(
-            "Incomplete transfer: received {received} of {total} bytes"
+            "Incomplete transfer: received {} of {}",
+            ByteSize(received),
+            ByteSize(total)
         ));
     }
 
