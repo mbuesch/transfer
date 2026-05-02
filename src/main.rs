@@ -40,6 +40,13 @@ struct Args {
     /// Language to use: en, de (default: auto)
     #[arg(long, value_name = "LANG")]
     lang: Option<String>,
+
+    /// Enable `tokio-console` tracing support.
+    ///
+    /// See <https://crates.io/crates/tokio-console>
+    #[arg(long)]
+    #[cfg(not(target_os = "android"))]
+    tokio_console: bool,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -61,7 +68,7 @@ fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     dioxus::desktop::tao::window::Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> ah::Result<()> {
     #[cfg(target_os = "android")]
     android_logger::init_once(
@@ -73,10 +80,16 @@ async fn main() -> ah::Result<()> {
     env_logger::init();
 
     #[cfg(not(target_os = "android"))]
+    let args = Args::parse();
+
+    #[cfg(not(target_os = "android"))]
+    if args.tokio_console {
+        console_subscriber::init();
+    }
+
+    #[cfg(not(target_os = "android"))]
     {
         use crate::ip_support::IpSupport;
-
-        let args = Args::parse();
 
         #[cfg(all(feature = "ipv4", feature = "ipv6"))]
         if args.ipv4 && !args.ipv6 {
@@ -109,7 +122,10 @@ async fn main() -> ah::Result<()> {
     #[cfg(not(target_os = "android"))]
     let builder = dioxus::LaunchBuilder::desktop();
 
-    builder.with_cfg(config).launch(App);
+    tokio::task::unconstrained(async move {
+        builder.with_cfg(config).launch(App);
+    })
+    .await;
 
     Ok(())
 }
