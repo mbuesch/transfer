@@ -2,6 +2,8 @@
 /target/
 /android-sign-release.sh
 /transfer-desktop-linux-x64
+/.mcp.json
+/.agents*
 *.aab
 *.apk
 *.idsig
