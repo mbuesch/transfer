@@ -316,20 +316,48 @@ class MainActivity : WryActivity() {
             )
         }
 
+        private fun findAvailableFileName(
+            activity: Activity,
+            treeUri: Uri,
+            parentDocUri: Uri,
+            displayName: String,
+        ): String? {
+            if (queryChildDocument(activity, treeUri, parentDocUri, displayName) == null) {
+                return displayName
+            }
+            val dotPos = displayName.lastIndexOf('.')
+            val baseName: String
+            val extension: String
+            if (dotPos >= 0) {
+                baseName = displayName.substring(0, dotPos)
+                extension = displayName.substring(dotPos)
+            } else {
+                baseName = displayName
+                extension = ""
+            }
+            for (i in 1..10000) {
+                val candidate = "$baseName ($i)$extension"
+                if (queryChildDocument(activity, treeUri, parentDocUri, candidate) == null) {
+                    return candidate
+                }
+            }
+            return null
+        }
+
         private fun copyFileToTree(
             activity: Activity,
             treeUri: Uri,
             parentDocUri: Uri,
             srcFile: File,
         ): Boolean {
-            val fileUri = queryChildDocument(activity, treeUri, parentDocUri, srcFile.name)
-                ?: DocumentsContract.createDocument(
-                    activity.contentResolver,
-                    parentDocUri,
-                    "application/octet-stream",
-                    srcFile.name,
-                )
+            val finalName = findAvailableFileName(activity, treeUri, parentDocUri, srcFile.name)
                 ?: return false
+            val fileUri = DocumentsContract.createDocument(
+                activity.contentResolver,
+                parentDocUri,
+                "application/octet-stream",
+                finalName,
+            ) ?: return false
             activity.contentResolver.openOutputStream(fileUri, "w")?.use { output ->
                 srcFile.inputStream().use { input -> input.copyTo(output) }
             } ?: return false
