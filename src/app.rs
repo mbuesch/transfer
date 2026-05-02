@@ -456,6 +456,7 @@ async fn run_discovery_listener<F, Fut>(
                     Ok(true) => {}
                     Ok(false) => {
                         log::debug!("{label} listener socket error, recreating socket");
+                        sleep(Duration::from_secs(1)).await;
                         break;
                     }
                     Err(_) => {
@@ -465,8 +466,8 @@ async fn run_discovery_listener<F, Fut>(
                 }
             },
             Err(e) => {
-                log::warn!("{label} listener unavailable: {e}, retrying in 5s");
-                sleep(Duration::from_secs(5)).await;
+                log::warn!("{label} listener unavailable: {e}");
+                sleep(Duration::from_secs(1)).await;
             }
         }
     }
