@@ -143,4 +143,4 @@ This application is AI generated with heavy manual modifications by
 
 Licensed under the Apache License version 2.0 or alternatively MIT or alternatively feel free to do whatever you want with this software without restriction.
 
-If you want to redistribute this software in a modified form, I would like to ask you kindly to remove my name from the source code, the documentation, the build scripts and any other files beforehand.
+If you want to redistribute this software with major modifications, I would like to ask you kindly to remove my name from the source code, the documentation, the build scripts and any other files beforehand. This is not an additional restriction to the licenses, but just a personal appeal.
