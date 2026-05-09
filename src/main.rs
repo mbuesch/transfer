@@ -1,9 +1,13 @@
-use crate::app::App;
+use crate::app::{App, InitialAutoAcceptFolder};
 use anyhow as ah;
 use dioxus::desktop::{Config, WindowBuilder};
 
 #[cfg(not(target_os = "android"))]
+use anyhow::format_err as err;
+#[cfg(not(target_os = "android"))]
 use clap::Parser;
+#[cfg(not(target_os = "android"))]
+use std::path::PathBuf;
 
 mod app;
 mod device_name;
@@ -21,6 +25,12 @@ mod android_interface;
 #[derive(Parser)]
 #[command(version, about = "LAN file transfer tool")]
 struct Args {
+    /// Set the auto-accept folder.
+    ///
+    /// Files received will be automatically saved to this folder without asking the user.
+    #[arg(long, short = 'a', value_name = "PATH")]
+    auto_accept: Option<PathBuf>,
+
     /// Enable IPv4 support.
     ///
     /// By default both --ipv4 and --ipv6 are enabled, unless one of them is explicitly specified.
@@ -122,8 +132,29 @@ async fn main() -> ah::Result<()> {
     #[cfg(not(target_os = "android"))]
     let builder = dioxus::LaunchBuilder::desktop();
 
+    #[cfg(target_os = "android")]
+    let auto_accept_folder = InitialAutoAcceptFolder(None);
+    #[cfg(not(target_os = "android"))]
+    let auto_accept_folder = {
+        if let Some(auto_accept) = &args.auto_accept
+            && !tokio::fs::metadata(auto_accept)
+                .await
+                .map(|a| a.is_dir())
+                .unwrap_or(false)
+        {
+            return Err(err!(
+                "--auto-accept folder does not exist or is not a directory: {}",
+                auto_accept.display()
+            ));
+        }
+        InitialAutoAcceptFolder(args.auto_accept)
+    };
+
     tokio::task::unconstrained(async move {
-        builder.with_cfg(config).launch(App);
+        builder
+            .with_cfg(config)
+            .with_context(auto_accept_folder)
+            .launch(App);
     })
     .await;
 

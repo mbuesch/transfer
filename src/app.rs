@@ -49,8 +49,12 @@ enum ActiveTab {
     Outgoing,
 }
 
+#[derive(Clone, Debug)]
+pub struct InitialAutoAcceptFolder(pub Option<PathBuf>);
+
 #[component]
 pub fn App() -> Element {
+    let initial_auto_accept_folder = consume_context::<InitialAutoAcceptFolder>();
     let detected_lang = Language::detect();
     let lang = use_context_provider(|| Signal::new(detected_lang));
     let device_id = Uuid::new_v4();
@@ -67,7 +71,8 @@ pub fn App() -> Element {
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
 
     // Folder for automatic accepting of incoming files (None = manual accept)
-    let auto_accept_folder: Signal<Option<PathBuf>> = use_signal(|| None);
+    let auto_accept_folder: Signal<Option<PathBuf>> =
+        use_signal(|| initial_auto_accept_folder.0.clone());
 
     // Channel for transfer commands (UI -> transfer server)
     let mut cmd_tx = use_signal(|| None);
