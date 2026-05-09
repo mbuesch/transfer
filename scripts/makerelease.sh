@@ -46,7 +46,7 @@ hook_post_archives()
         "./$android"
     cp "./$android.tar.xz" "$archive_dir/"
 
-    ./desktop-build.sh
+    ./desktop-build-linux.sh
     local desktop="transfer-desktop-x64-$version"
     mkdir "./$desktop"
     cp "./transfer-desktop-linux-x64" "./$desktop/"
