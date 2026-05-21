@@ -62,7 +62,7 @@ jobs:
         if: matrix.toolchain.name == 'stable'
         run: rustup component add clippy
       - name: Install dioxus-cli
-        run: cargo install dioxus-cli
+        run: cargo install --locked dioxus-cli
 
       # Build
       - name: Build (Linux)
