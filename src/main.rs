@@ -1,11 +1,12 @@
 use crate::app::{App, InitialAutoAcceptFolder};
 use anyhow as ah;
-use dioxus::desktop::{Config, WindowBuilder};
 
 #[cfg(not(target_os = "android"))]
 use anyhow::format_err as err;
 #[cfg(not(target_os = "android"))]
 use clap::Parser;
+#[cfg(not(target_os = "android"))]
+use dioxus::desktop::{Config, WindowBuilder};
 #[cfg(not(target_os = "android"))]
 use std::path::PathBuf;
 
@@ -118,19 +119,18 @@ async fn main() -> ah::Result<()> {
         }
     }
 
-    let window = WindowBuilder::new()
-        .with_always_on_top(false)
-        .with_title("File Transfer");
-
-    #[cfg(not(target_os = "android"))]
-    let window = window.with_window_icon(load_window_icon());
-
-    let config = Config::new().with_window(window).with_menu(None);
-
     #[cfg(target_os = "android")]
     let builder = dioxus::LaunchBuilder::mobile();
+
     #[cfg(not(target_os = "android"))]
-    let builder = dioxus::LaunchBuilder::desktop();
+    let builder = {
+        let window = WindowBuilder::new()
+            .with_always_on_top(false)
+            .with_title("File Transfer")
+            .with_window_icon(load_window_icon());
+        let config = Config::new().with_window(window).with_menu(None);
+        dioxus::LaunchBuilder::desktop().with_cfg(config)
+    };
 
     #[cfg(target_os = "android")]
     let auto_accept_folder = InitialAutoAcceptFolder(None);
@@ -151,10 +151,7 @@ async fn main() -> ah::Result<()> {
     };
 
     tokio::task::unconstrained(async move {
-        builder
-            .with_cfg(config)
-            .with_context(auto_accept_folder)
-            .launch(App);
+        builder.with_context(auto_accept_folder).launch(App);
     })
     .await;
 

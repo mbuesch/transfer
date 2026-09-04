@@ -12,7 +12,6 @@ publish = false
 anyhow = "1"
 bytesize = "2"
 crc-fast = "1"
-dioxus = { version = "0.7", features = [ "desktop", "mobile" ] }
 dirs = "6"
 env_logger = "0.11"
 hostname = "0.4"
@@ -28,11 +27,13 @@ zip = "8"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 clap = { version = "4", features = [ "derive" ] }
 console-subscriber = "0.5"
+dioxus = { version = "0.7", no-default-features = true, features = [ "desktop" ] }
 png = "0.18"
 rfd = "0.17"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
+dioxus = { version = "0.7", no-default-features = true, features = [ "mobile" ] }
 jni = "0.22"
 ndk-context = "0.1"
 
