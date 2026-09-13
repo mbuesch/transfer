@@ -34,6 +34,12 @@ If you need features other than simple file transfer between two devices, there 
 
 ## Building and installing
 
+### Pre-built executables for Android, Windows, MacOS
+
+Go to the
+[Github-Actions CI workflow](https://github.com/mbuesch/transfer/actions/workflows/ci.yml)
+and pick the latest successful run to download the pre-built artifacts for your platform.
+
 ### Install Rust
 
 Get and install the latest stable Rust version from [https://rust-lang.org/](https://rust-lang.org/).
@@ -132,7 +138,6 @@ Ensure that these are allowed on your LAN and router if discovery fails.
 - Make the app available in **Play Store**.
   I need your help for that.
   Please get in contact with me, if you are interested in becoming an tester for the app to get it registered in the Play Store.
-- Provide a built **Android APK** for manual installation (sideloading).
 - Desktop: Add the option for this app to be always-on and sit in the **system tray** waiting for new connections and popping-up on new connections.
   Provide systemd user service files for that.
 
