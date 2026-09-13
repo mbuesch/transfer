@@ -1,6 +1,6 @@
 #!/bin/sh
 
-basedir="$(realpath "$0" | xargs dirname)"
+basedir="$(dirname "$(realpath "$0")")"
 cd "$basedir"
 
 cargo clean
