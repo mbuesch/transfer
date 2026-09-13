@@ -62,21 +62,12 @@ struct Args {
 
 #[cfg(not(target_os = "android"))]
 fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
-    let bytes = include_bytes!("../assets/icon.png");
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes.as_slice()));
-    let mut reader = decoder.read_info().ok()?;
-    let size = reader.output_buffer_size()?;
-    let mut buf = vec![0u8; size];
-    let info = reader.next_frame(&mut buf).ok()?;
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgb => buf[..info.buffer_size()]
-            .chunks(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        _ => return None,
-    };
-    dioxus::desktop::tao::window::Icon::from_rgba(rgba, info.width, info.height).ok()
+    // Pre-converted by build.rs: width (u32 LE), height (u32 LE), then raw RGBA bytes.
+    const RGBA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.rgba"));
+    let (header, rgba) = RGBA.split_at_checked(4 + 4)?;
+    let width = u32::from_le_bytes(header[0..4].try_into().ok()?);
+    let height = u32::from_le_bytes(header[4..8].try_into().ok()?);
+    dioxus::desktop::tao::window::Icon::from_rgba(rgba.to_vec(), width, height).ok()
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
