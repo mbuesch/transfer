@@ -110,7 +110,10 @@ jobs:
         shell: cmd
       - name: Build (MacOS)
         if: matrix.os.name == 'macos'
-        run: ./desktop-build-macos.sh
+        run: |
+          ./desktop-build-macos.sh
+          mkdir macos-artifact
+          mv Transfer.app macos-artifact/
       - name: Build (Android)
         if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
         env:
@@ -147,7 +150,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: transfer-desktop-macos
-          path: Transfer.app
+          path: macos-artifact
           retention-days: 90
           if-no-files-found: error
           compression-level: 6
