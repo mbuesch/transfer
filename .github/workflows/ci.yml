@@ -56,6 +56,9 @@ jobs:
       # Install toolchain
       - name: Install Rust toolchain
         run: rustup toolchain install ${{ matrix.toolchain.version }}
+      - name: Install Rust Android target
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        run: rustup target add aarch64-linux-android
       - name: Set default toolchain
         run: rustup default ${{ matrix.toolchain.version }}
       - name: Install clippy
@@ -63,6 +66,32 @@ jobs:
         run: rustup component add clippy
       - name: Install dioxus-cli
         run: cargo install --locked dioxus-cli
+
+      # Install Android build dependencies.
+      - name: Set up Java
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Set up Android SDK
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '16111833'
+      - name: Set up Android NDK
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: 'r29'
+          link-to-sdk: true
+          add-to-path: true
+
+      # Clippy
+      - name: Clippy
+        if: matrix.toolchain.name == 'stable'
+        run: cargo clippy -- -D warnings
 
       # Build
       - name: Build (Linux)
@@ -77,10 +106,54 @@ jobs:
       - name: Build (MacOS)
         if: matrix.os.name == 'macos'
         run: ./desktop-build-macos.sh
+      - name: Build (Android)
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          export PATH="$BUILD_TOOLS_DIR:$PATH"
+          ./android-build.sh
+          mkdir transfer-aarch64
+          cp \
+            transfer-aarch64.aab \
+            transfer-aarch64.apk \
+            transfer-aarch64.apk.idsig \
+            transfer-aarch64-unsigned.aab \
+            transfer-aarch64-unsigned.apk \
+            android-install.sh \
+            android-connect-tcpip.sh \
+            android-logcat-errors.sh \
+            transfer-aarch64/
 
-      # Clippy
-      - name: Clippy
-        if: matrix.toolchain.name == 'stable'
-        run: cargo clippy -- -D warnings
+      # Upload artifacts
+      - name: Upload Windows app
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: transfer-desktop-windows-x64
+          path: transfer-desktop-windows-x64.exe
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
+      - name: Upload MacOS app
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: transfer-desktop-macos
+          path: Transfer.app
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
+      - name: Upload Android app
+        if: matrix.toolchain.name == 'stable' && matrix.os.name == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: transfer-android-app-aarch64
+          path: transfer-aarch64
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
 
 # vim: ts=2 sw=2 expandtab
