@@ -27,13 +27,13 @@ zip = "8"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 clap = { version = "4", features = [ "derive" ] }
 console-subscriber = "0.5"
-dioxus = { version = "0.7", no-default-features = true, features = [ "desktop" ] }
+dioxus = { version = "0.7", default-features = false, features = [ "desktop" ] }
 png = "0.18"
 rfd = "0.17"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
-dioxus = { version = "0.7", no-default-features = true, features = [ "mobile" ] }
+dioxus = { version = "0.7", default-features = false, features = [ "mobile" ] }
 jni = "0.22"
 ndk-context = "0.1"
 
