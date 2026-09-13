@@ -88,6 +88,11 @@ jobs:
           link-to-sdk: true
           add-to-path: true
 
+      # Check source code formatting
+      - name: Check source code formatting
+        if: matrix.toolchain.name == 'stable'
+        run: cargo fmt --all --check
+
       # Clippy
       - name: Clippy
         if: matrix.toolchain.name == 'stable'
