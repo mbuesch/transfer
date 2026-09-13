@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-basedir="$(cd "$(dirname "$0")" && pwd)"
+basedir="$(dirname "$(realpath "$0")")"
 cd "$basedir"
 
 dx build --desktop --release
