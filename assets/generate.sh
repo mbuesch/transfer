@@ -11,8 +11,8 @@ command -v convert >/dev/null 2>&1 || { echo "convert not found. Please install 
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found. Please install python3." >&2; exit 1; }
 python3 -c "import lxml" 2>/dev/null || { echo "python3-lxml not found. Please install python3-lxml." >&2; exit 1; }
 
-# Desktop icon: 512x512 PNG embedded by main.rs
-rsvg-convert -w 512 -h 512 assets/icon.svg -o assets/icon.png
+# Desktop icon: 128x128 PNG embedded by main.rs
+rsvg-convert -w 128 -h 128 assets/icon.svg -o assets/icon.png
 
 # Android mipmap WebP (legacy raster icons)
 for size_dir in "48:mipmap-mdpi" "72:mipmap-hdpi" "96:mipmap-xhdpi" "144:mipmap-xxhdpi" "192:mipmap-xxxhdpi"; do
