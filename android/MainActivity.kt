@@ -150,15 +150,11 @@ class MainActivity : WryActivity() {
 
         @JvmStatic
         fun getSharedFiles(): Array<String> {
+            // Drain atomically so files copied concurrently are never lost.
             synchronized(sharedFiles) {
-                return sharedFiles.toTypedArray()
-            }
-        }
-
-        @JvmStatic
-        fun clearSharedFiles() {
-            synchronized(sharedFiles) {
+                val result = sharedFiles.toTypedArray()
                 sharedFiles.clear()
+                return result
             }
         }
 

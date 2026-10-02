@@ -2,7 +2,7 @@ use crate::l10n::Language;
 use anyhow as ah;
 use std::path::PathBuf;
 
-/// Retrieve file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
+/// Drain file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
 pub fn android_get_shared_files() -> Vec<PathBuf> {
     (|| -> Option<Vec<PathBuf>> {
         let ctx = ndk_context::android_context();
@@ -33,13 +33,6 @@ pub fn android_get_shared_files() -> Vec<PathBuf> {
                         paths.push(PathBuf::from(s));
                     }
                 }
-                // Clear the shared files after retrieval
-                let _ = env.call_static_method(
-                    &class,
-                    ::jni::jni_str!("clearSharedFiles"),
-                    ::jni::jni_sig!("()V"),
-                    &[],
-                );
                 Ok(Some(paths))
             },
         )

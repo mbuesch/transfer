@@ -169,8 +169,14 @@ pub fn App() -> Element {
                         )
                         .await
                         .unwrap_or_default();
+                        // Files are copied incrementally on the Java side, so append.
                         if !files.is_empty() {
-                            shared_files.set(files);
+                            let mut current = shared_files.write();
+                            for f in files {
+                                if !current.contains(&f) {
+                                    current.push(f);
+                                }
+                            }
                         }
                         match tokio::task::spawn_blocking(
                             crate::android_interface::android_get_copy_status,
