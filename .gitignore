@@ -8,3 +8,4 @@
 *.apk
 *.idsig
 *.jks
+!/android/debug.jks

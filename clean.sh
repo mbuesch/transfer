@@ -14,4 +14,3 @@ rm -f transfer-aarch64-release.apk.idsig
 rm -f transfer-aarch64-unsigned.aab
 rm -f transfer-aarch64.aab
 rm -f transfer-aarch64-release.aab
-#rm -f debug.jks
