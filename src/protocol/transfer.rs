@@ -6,6 +6,7 @@ use anyhow::{self as ah, Context as _, format_err as err};
 use bytesize::ByteSize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs::File,
     io::{Read as _, Seek as _, SeekFrom, Write as _},
@@ -108,7 +109,10 @@ fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let Some(rel_path) = file.enclosed_name() else {
-            log::warn!("Skipping zip entry with unsafe path: {}", file.name());
+            log::warn!(
+                "Skipping zip entry with unsafe path: {}",
+                file.name().unwrap_or(Cow::Borrowed(""))
+            );
             continue;
         };
         let out_path = save_path.join(rel_path);

@@ -22,7 +22,7 @@ socket2 = "0.6"
 tempfile = "3"
 tokio = { version = "1", features = [ "rt-multi-thread", "net", "fs", "time", "io-util" ] }
 uuid = { version = "1", features = [ "v4" ] }
-zip = "8"
+zip = "9"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 clap = { version = "4", features = [ "derive" ] }
