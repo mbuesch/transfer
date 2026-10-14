@@ -25,11 +25,14 @@ pub struct DiscoveryPacket {
 impl DiscoveryPacket {
     pub fn new(device_id: Uuid, device_name: &str, transfer_port: u16) -> Self {
         let device_id_int = device_id.as_u128();
+        let device_name_fixed = FixedStr::from_str_trunc(device_name);
+        let checksum =
+            Self::compute_checksum(device_id, device_name_fixed.as_bytes(), transfer_port);
         Self {
             device_id: (device_id_int as u64, (device_id_int >> 64) as u64),
-            device_name: FixedStr::from_str_trunc(device_name),
+            device_name: device_name_fixed,
             transfer_port,
-            checksum: Self::compute_checksum(device_id, device_name.as_bytes(), transfer_port),
+            checksum,
         }
     }
 
