@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::{self as ah, Context as _, format_err as err};
 use bytesize::ByteSize;
+use rkyv::util::AlignedVec;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     borrow::Cow,
@@ -291,7 +292,8 @@ async fn handle_incoming_connection(
 ) -> ah::Result<()> {
     log::debug!("Read header for incoming transfer {transfer_id}...");
     send_status(&event_tx, transfer_id, Some("Reading header..."));
-    let mut header_buf = vec![0u8; TransferHeader::size()];
+    let mut header_buf = AlignedVec::<16>::with_capacity(TransferHeader::size());
+    header_buf.resize(TransferHeader::size(), 0);
     match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(e.into()),

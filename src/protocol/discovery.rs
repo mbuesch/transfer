@@ -4,6 +4,7 @@ use crate::{
     protocol::packets::{DEVICE_TIMEOUT, DISCOVERY_PORT, DiscoveryPacket},
 };
 use anyhow::{self as ah, Context as _, format_err as err};
+use rkyv::util::Align;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -238,8 +239,8 @@ async fn update_device(
 /// Returns `true` if the socket is healthy (packet received or ignored),
 /// `false` on a socket-level I/O error (caller should recreate the socket).
 pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &DeviceMap) -> bool {
-    let mut buf = [0u8; DiscoveryPacket::size()];
-    match socket.recv_from(&mut buf).await {
+    let mut buf = Align([0u8; DiscoveryPacket::size()]);
+    match socket.recv_from(&mut buf.0).await {
         Ok((len, addr)) => {
             if len != DiscoveryPacket::size() {
                 log::warn!(
@@ -249,7 +250,7 @@ pub async fn listen_for_devices(socket: &UdpSocket, own_id: Uuid, devices: &Devi
                 );
                 return true;
             }
-            match DiscoveryPacket::deserialize(&buf[..len]) {
+            match DiscoveryPacket::deserialize(&buf.0[..len]) {
                 Ok(packet) if packet.device_id() != own_id => {
                     if !packet.verify_checksum() {
                         log::warn!(
