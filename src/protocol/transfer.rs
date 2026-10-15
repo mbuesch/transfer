@@ -563,178 +563,145 @@ pub async fn send_path(
     transfer_id: u64,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
 ) -> ah::Result<()> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let err_event_tx = event_tx.clone();
 
-    log::debug!("Packing {:?} for transfer {transfer_id}", path.display());
-    send_status(&event_tx, transfer_id, Some("Packing..."));
-    let path_clone = path.clone();
-    let (zip_std_file, zip_size) =
-        match tokio::task::spawn_blocking(move || pack_to_zip(&path_clone))
+    let res = async move || -> ah::Result<()> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        log::debug!("Packing {} for transfer {transfer_id}", path.display());
+        send_status(&event_tx, transfer_id, Some("Packing..."));
+        let path_clone = path.clone();
+        let (zip_std_file, zip_size) =
+            match tokio::task::spawn_blocking(move || pack_to_zip(&path_clone))
+                .await
+                .context("Pack task panicked")?
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(e).context("Failed to pack");
+                }
+            };
+        if zip_size == 0 {
+            return Err(err!("Nothing to send"));
+        }
+
+        log::debug!("Calculating checksum for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Calculating checksum..."));
+        let (zip_std_file, payload_checksum) =
+            tokio::task::spawn_blocking(move || -> ah::Result<_> {
+                let mut zip_std_file = zip_std_file;
+                let mut cs = checksum_new();
+                let mut ck_buf = vec![0u8; CHUNK_SIZE];
+                loop {
+                    let n = zip_std_file.read(&mut ck_buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    cs.update(&ck_buf[..n]);
+                }
+                let checksum = cs.finalize().to_le_bytes();
+                zip_std_file.seek(SeekFrom::Start(0))?;
+                Ok((zip_std_file, checksum))
+            })
             .await
-            .context("Pack task panicked")?
-        {
-            Ok(v) => v,
+            .context("Checksum task panicked")??;
+        let mut zip_file = tokio::fs::File::from_std(zip_std_file);
+
+        log::debug!(
+            "Connecting to {} for transfer {transfer_id}...",
+            target_addr
+        );
+        send_status(&event_tx, transfer_id, Some("Connecting..."));
+        let mut stream = match TcpStream::connect(target_addr).await {
+            Ok(s) => s,
             Err(e) => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: format!("Failed to pack: {e}"),
-                });
-                return Err(e);
+                return Err(e).context("Connection failed");
             }
         };
-    if zip_size == 0 {
-        let _ = event_tx.send(TransferEvent::SendFailed {
-            transfer_id,
-            error: "Nothing to send".to_string(),
-        });
-        return Err(err!("Nothing to send"));
-    }
 
-    log::debug!("Calculating checksum for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Calculating checksum..."));
-    let (zip_std_file, payload_checksum) = tokio::task::spawn_blocking(move || -> ah::Result<_> {
-        let mut zip_std_file = zip_std_file;
-        let mut cs = checksum_new();
-        let mut ck_buf = vec![0u8; CHUNK_SIZE];
+        log::debug!("Sending header for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Sending header..."));
+        let header = TransferHeader::new(&name, zip_size, &sender_name, payload_checksum)?;
+        let header_bytes = match header.serialize() {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(e).context("Serialization failed");
+            }
+        };
+        if let Err(e) = stream.write_all(&header_bytes).await {
+            return Err(e).context("Failed to send header");
+        }
+
+        log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Waiting for response..."));
+        let mut response_buf = [0u8; 2];
+        match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
+            Ok(Ok(_)) => match response_buf {
+                ACCEPT => (),
+                REJECT => {
+                    return Err(err!("Transfer rejected by receiver"));
+                }
+                _ => {
+                    return Err(err!("Invalid response from receiver"));
+                }
+            },
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(err!("Connection closed before response"));
+            }
+            Ok(Err(e)) => {
+                return Err(e).context("Error reading response");
+            }
+            Err(_) => {
+                return Err(err!("Timed out waiting for response"));
+            }
+        }
+
+        log::debug!("Starting zip stream for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Sending..."));
+        let total = zip_size;
+        let mut sent: u64 = 0;
+        let mut last_reported: u64 = 0;
+        let mut send_buf = vec![0u8; CHUNK_SIZE];
         loop {
-            let n = zip_std_file.read(&mut ck_buf)?;
-            if n == 0 {
-                break;
+            let n = match zip_file.read(&mut send_buf).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    return Err(e).context("Send error (zip)");
+                }
+            };
+            if let Err(e) = stream.write_all(&send_buf[..n]).await {
+                return Err(e).context("Send error (zip stream write)");
             }
-            cs.update(&ck_buf[..n]);
+            sent += n as u64;
+            if sent - last_reported >= PROGRESS_REPORT_INTERVAL || sent >= total {
+                last_reported = sent;
+                let _ = event_tx.send(TransferEvent::SendProgress {
+                    transfer_id,
+                    bytes_sent: sent,
+                    total,
+                });
+            }
         }
-        let checksum = cs.finalize().to_le_bytes();
-        zip_std_file.seek(SeekFrom::Start(0))?;
-        Ok((zip_std_file, checksum))
-    })
-    .await
-    .context("Checksum task panicked")??;
-    let mut zip_file = tokio::fs::File::from_std(zip_std_file);
 
-    log::debug!(
-        "Connecting to {} for transfer {transfer_id}...",
-        target_addr
-    );
-    send_status(&event_tx, transfer_id, Some("Connecting..."));
-    let mut stream = match TcpStream::connect(target_addr).await {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: format!("Connection failed: {e}"),
-            });
-            return Err(e.into());
-        }
-    };
+        let _ = stream.shutdown().await;
+        send_status(&event_tx, transfer_id, None);
+        let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
+        log::info!("Transfer {transfer_id} completed: {}", path.display());
 
-    log::debug!("Sending header for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Sending header..."));
-    let header = TransferHeader::new(&name, zip_size, &sender_name, payload_checksum)?;
-    let header_bytes = match header.serialize() {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: format!("Serialization error: {e}"),
-            });
-            return Err(e);
-        }
-    };
-    if let Err(e) = stream.write_all(&header_bytes).await {
-        let _ = event_tx.send(TransferEvent::SendFailed {
+        Ok(())
+    }()
+    .await;
+
+    if let Err(e) = &res {
+        log::error!("{e:?}");
+        let _ = err_event_tx.send(TransferEvent::SendFailed {
             transfer_id,
-            error: format!("Failed to send header: {e}"),
+            error: format!("{e:?}"),
         });
-        return Err(e.into());
     }
-
-    log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Waiting for response..."));
-    let mut response_buf = [0u8; 2];
-    match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
-        Ok(Ok(_)) => match response_buf {
-            ACCEPT => (),
-            REJECT => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: "Transfer rejected by receiver".to_string(),
-                });
-                return Err(err!("Transfer rejected by receiver"));
-            }
-            _ => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: "Invalid response from receiver".to_string(),
-                });
-                return Err(err!("Invalid response from receiver"));
-            }
-        },
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: "Connection closed before response".to_string(),
-            });
-            return Err(err!("Connection closed before response"));
-        }
-        Ok(Err(e)) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: format!("Error reading response: {e}"),
-            });
-            return Err(e.into());
-        }
-        Err(_) => {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: "Timed out waiting for response".to_string(),
-            });
-            return Err(err!("Timed out waiting for response"));
-        }
-    }
-
-    log::debug!("Starting zip stream for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Sending..."));
-    let total = zip_size;
-    let mut sent: u64 = 0;
-    let mut last_reported: u64 = 0;
-    let mut send_buf = vec![0u8; CHUNK_SIZE];
-    loop {
-        let n = match zip_file.read(&mut send_buf).await {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) => {
-                let _ = event_tx.send(TransferEvent::SendFailed {
-                    transfer_id,
-                    error: format!("Send error: {e}"),
-                });
-                return Err(e.into());
-            }
-        };
-        if let Err(e) = stream.write_all(&send_buf[..n]).await {
-            let _ = event_tx.send(TransferEvent::SendFailed {
-                transfer_id,
-                error: format!("Send error: {e}"),
-            });
-            return Err(e.into());
-        }
-        sent += n as u64;
-        if sent - last_reported >= PROGRESS_REPORT_INTERVAL || sent >= total {
-            last_reported = sent;
-            let _ = event_tx.send(TransferEvent::SendProgress {
-                transfer_id,
-                bytes_sent: sent,
-                total,
-            });
-        }
-    }
-
-    let _ = stream.shutdown().await;
-    send_status(&event_tx, transfer_id, None);
-    let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
-    log::info!("Transfer {transfer_id} completed: {}", path.display());
-
-    Ok(())
+    res
 }
