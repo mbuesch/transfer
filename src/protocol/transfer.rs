@@ -232,7 +232,8 @@ pub async fn run_transfer_server(
 
                 join_set.spawn(async move {
                     if let Err(e) =
-                        handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
+                        handle_incoming_connection(stream, addr, transfer_id, event_tx, pending)
+                            .await
                     {
                         log::error!("Incoming connection handling error: {e}");
                     }
@@ -291,80 +292,93 @@ async fn handle_incoming_connection(
     event_tx: mpsc::UnboundedSender<TransferEvent>,
     pending: Arc<Mutex<HashMap<u64, PendingIncoming>>>,
 ) -> ah::Result<()> {
-    log::debug!("Read header for incoming transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Reading header..."));
-    let mut header_buf = AlignedVec::<16>::with_capacity(TransferHeader::size());
-    header_buf.resize(TransferHeader::size(), 0);
-    match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(e.into()),
-        Err(_) => return Err(err!("Timeout while reading header")),
-    }
-    let header = TransferHeader::deserialize(&header_buf)?;
-    let header_filename = header.filename.as_str().context("Decode filename failed")?;
-    let header_sender_name = header
-        .sender_name
-        .as_str()
-        .context("Decode sender name failed")?;
+    let err_event_tx = event_tx.clone();
 
-    log::debug!("Verifying header checksum for incoming transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Verifying header..."));
-    if !header.verify_header_checksum() {
-        return Err(err!("Header checksum mismatch"));
-    }
-
-    log::info!(
-        "Incoming transfer from {}: {} ({})",
-        header_sender_name,
-        header_filename,
-        ByteSize(header.file_size)
-    );
-
-    let incoming = IncomingTransfer {
-        id: transfer_id,
-        header: header.clone(),
-        from_addr: addr,
-        status: TransferStatus::Pending,
-        save_path: None,
-    };
-
-    // Insert into the pending map BEFORE sending the IncomingRequest event.
-    // This prevents a race where auto-accept immediately sends AcceptTransfer
-    // and the command loop finds an empty map.
-    {
-        let mut map = pending.lock().await;
-        map.insert(
-            transfer_id,
-            PendingIncoming {
-                transfer_id,
-                header,
-                stream,
-            },
-        );
-    }
-
-    let _ = event_tx.send(TransferEvent::IncomingRequest(Box::new(incoming)));
-
-    // Spawn an expiry task: if the transfer is neither accepted nor rejected
-    // within PENDING_TIMEOUT, close the dead connection and emit a failure
-    // event to the UI to avoid a permanent FD leak.
-    tokio::spawn({
-        let pending = Arc::clone(&pending);
-        let event_tx = event_tx.clone();
-        async move {
-            sleep(PENDING_TIMEOUT).await;
-            let mut map = pending.lock().await;
-            if map.remove(&transfer_id).is_some() {
-                // The TcpStream inside PendingIncoming is dropped here, closing the OS socket.
-                let _ = event_tx.send(TransferEvent::Failed {
-                    transfer_id,
-                    error: "Transfer timed out waiting for user response".to_string(),
-                });
-            }
+    let res = async move || -> ah::Result<()> {
+        log::debug!("Read header for incoming transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Reading header..."));
+        let mut header_buf = AlignedVec::<16>::with_capacity(TransferHeader::size());
+        header_buf.resize(TransferHeader::size(), 0);
+        match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(err!("Timeout while reading header")),
         }
-    });
+        let header = TransferHeader::deserialize(&header_buf)?;
+        let header_filename = header.filename.as_str().context("Decode filename failed")?;
+        let header_sender_name = header
+            .sender_name
+            .as_str()
+            .context("Decode sender name failed")?;
 
-    Ok(())
+        log::debug!("Verifying header checksum for incoming transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Verifying header..."));
+        if !header.verify_header_checksum() {
+            return Err(err!("Header checksum mismatch"));
+        }
+
+        log::info!(
+            "Incoming transfer from {}: {} ({})",
+            header_sender_name,
+            header_filename,
+            ByteSize(header.file_size)
+        );
+        let incoming = IncomingTransfer {
+            id: transfer_id,
+            header: header.clone(),
+            from_addr: addr,
+            status: TransferStatus::Pending,
+            save_path: None,
+        };
+
+        // Insert into the pending map BEFORE sending the IncomingRequest event.
+        // This prevents a race where auto-accept immediately sends AcceptTransfer
+        // and the command loop finds an empty map.
+        {
+            let mut map = pending.lock().await;
+            map.insert(
+                transfer_id,
+                PendingIncoming {
+                    transfer_id,
+                    header,
+                    stream,
+                },
+            );
+        }
+
+        let _ = event_tx.send(TransferEvent::IncomingRequest(Box::new(incoming)));
+
+        // Spawn an expiry task: if the transfer is neither accepted nor rejected
+        // within PENDING_TIMEOUT, close the dead connection and emit a failure
+        // event to the UI to avoid a permanent FD leak.
+        tokio::spawn({
+            let pending = Arc::clone(&pending);
+            let event_tx = event_tx.clone();
+            async move {
+                sleep(PENDING_TIMEOUT).await;
+                let mut map = pending.lock().await;
+                if map.remove(&transfer_id).is_some() {
+                    // The TcpStream inside PendingIncoming is dropped here, closing the OS socket.
+                    let _ = event_tx.send(TransferEvent::Failed {
+                        transfer_id,
+                        error: "Transfer timed out waiting for user response".to_string(),
+                    });
+                }
+            }
+        });
+
+        Ok(())
+    }()
+    .await;
+
+    if let Err(e) = &res {
+        log::error!("{e:?}");
+        let _ = err_event_tx.send(TransferEvent::Failed {
+            transfer_id,
+            error: format!("{e:?}"),
+        });
+    }
+    res
 }
 
 /// Find a non-colliding filename by appending numbers if the file already exists.
