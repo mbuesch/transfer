@@ -173,6 +173,12 @@ async fn update_device(
     packet: DiscoveryPacket,
     addr: SocketAddr,
 ) -> ah::Result<()> {
+    let device_id = packet.device_id();
+    let device_name = packet
+        .device_name
+        .as_str()
+        .context("Device name conversion failed")?;
+    let transfer_port = packet.transfer_port;
     let device_addr = match addr {
         SocketAddr::V6(v6) => {
             if !IpSupport::ipv6() {
@@ -196,37 +202,36 @@ async fn update_device(
             SocketAddr::new(addr.ip(), packet.transfer_port)
         }
     };
+    let now = Instant::now();
 
     {
         let mut map = devices.lock().await;
 
-        let mut insert = false;
         if let Some(dev) = map.get_mut(&packet.device_id()) {
-            if dev.addr.is_ipv6() && device_addr.is_ipv4() && IpSupport::ipv4() {
-                // Prefer IPv4 address if we already have an IPv6 one for the same device ID.
-                insert = true;
-            } else if dev.addr.is_ipv4() == device_addr.is_ipv4()
-                && dev.addr.is_ipv6() == device_addr.is_ipv6()
-            {
-                // Just update the time stamp for this device - it's still alive.
-                dev.last_seen = Instant::now();
+            // Same address family?
+            let same_family = dev.addr.is_ipv4() == device_addr.is_ipv4()
+                && dev.addr.is_ipv6() == device_addr.is_ipv6();
+
+            // Prefer IPv4 address if we already have an IPv6 one for the same device ID.
+            let prefer_ipv4 = dev.addr.is_ipv6() && device_addr.is_ipv4() && IpSupport::ipv4();
+
+            // Update entry.
+            if same_family || prefer_ipv4 {
+                dev.device_name = device_name.to_string();
+                dev.addr = device_addr;
+                dev.transfer_port = transfer_port;
+                dev.last_seen = now;
             }
         } else {
-            insert = true;
-        }
-        if insert {
+            // New entry.
             map.insert(
                 packet.device_id(),
                 DiscoveredDevice {
-                    device_id: packet.device_id(),
-                    device_name: packet
-                        .device_name
-                        .as_str()
-                        .context("Device name conversion failed")?
-                        .to_string(),
+                    device_id,
+                    device_name: device_name.to_string(),
                     addr: device_addr,
-                    transfer_port: packet.transfer_port,
-                    last_seen: Instant::now(),
+                    transfer_port,
+                    last_seen: now,
                 },
             );
         }
