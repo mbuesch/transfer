@@ -203,40 +203,41 @@ pub async fn run_transfer_server(
 
     let pending = Arc::new(Mutex::new(HashMap::new()));
 
-    let pending_clone = Arc::clone(&pending);
-    let event_tx_clone = event_tx.clone();
-
     // Spawn acceptor task
-    let accept_handle = tokio::spawn(async move {
-        // JoinSet owns all per-connection tasks. When this acceptor task is
-        // aborted (via accept_handle.abort()), the JoinSet is dropped, which
-        // aborts every tracked task in it.
-        let mut join_set: JoinSet<()> = JoinSet::new();
-        let mut next_id: u64 = 1;
-        loop {
-            let (stream, addr) = match listener.accept().await {
-                Ok(v) => v,
-                Err(e) => {
-                    log::error!("Accept error: {e}");
-                    continue;
-                }
-            };
-            let event_tx = event_tx_clone.clone();
-            let pending = Arc::clone(&pending_clone);
+    let accept_handle = tokio::spawn({
+        let event_tx = event_tx.clone();
+        let pending = Arc::clone(&pending);
+        async move {
+            // JoinSet owns all per-connection tasks. When this acceptor task is
+            // aborted (via accept_handle.abort()), the JoinSet is dropped, which
+            // aborts every tracked task in it.
+            let mut join_set: JoinSet<()> = JoinSet::new();
+            let mut next_id: u64 = 1;
+            loop {
+                let (stream, addr) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("Accept error: {e}");
+                        continue;
+                    }
+                };
+                let event_tx = event_tx.clone();
+                let pending = Arc::clone(&pending);
 
-            let transfer_id = next_id;
-            next_id += 1;
+                let transfer_id = next_id;
+                next_id += 1;
 
-            // Reap completed tasks to avoid unbounded JoinSet growth.
-            while join_set.try_join_next().is_some() {}
+                // Reap completed tasks to avoid unbounded JoinSet growth.
+                while join_set.try_join_next().is_some() {}
 
-            join_set.spawn(async move {
-                if let Err(e) =
-                    handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
-                {
-                    log::error!("Incoming connection handling error: {e}");
-                }
-            });
+                join_set.spawn(async move {
+                    if let Err(e) =
+                        handle_incoming_connection(stream, addr, transfer_id, event_tx, pending).await
+                    {
+                        log::error!("Incoming connection handling error: {e}");
+                    }
+                });
+            }
         }
     });
 
@@ -416,150 +417,129 @@ async fn receive_file(
     save_path: PathBuf,
     event_tx: mpsc::UnboundedSender<TransferEvent>,
 ) -> ah::Result<()> {
-    log::debug!("Accepting transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Accepting..."));
-    if let Err(e) = stream.write_all(&ACCEPT).await {
-        let _ = event_tx.send(TransferEvent::Failed {
-            transfer_id,
-            error: format!("Failed to send accept: {e}"),
-        });
-        return Err(e.into());
-    }
+    let err_event_tx = event_tx.clone();
 
-    log::debug!("Starting to receive zip data for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Receiving..."));
-    let mut received: u64 = 0;
-    let mut last_reported: u64 = 0;
-    let total = header.file_size;
-    let mut buf = vec![0u8; CHUNK_SIZE];
-    // tempfile() is a blocking syscall; use spawn_blocking.
-    let zip_tmpfile = spawn_blocking(tempfile)
-        .await
-        .context("Tempfile task panicked")?
-        .context("Failed to create temporary ZIP file")?;
-    let mut zip_file = tokio::fs::File::from_std(zip_tmpfile);
-    let mut cs = checksum_new();
-    loop {
-        if received >= total {
-            break;
+    let res = async move || -> ah::Result<()> {
+        log::debug!("Accepting transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Accepting..."));
+        if let Err(e) = stream.write_all(&ACCEPT).await {
+            return Err(e).context("Failed to send accept");
         }
 
-        let to_read = std::cmp::min(CHUNK_SIZE as u64, total - received) as usize;
-        match timeout(CHUNK_RECEIVE_TIMEOUT, stream.read(&mut buf[..to_read])).await {
-            Ok(Ok(0)) => break,
-            Ok(Ok(n)) => {
-                cs.update(&buf[..n]);
-                zip_file.write_all(&buf[..n]).await?;
-                received += n as u64;
-                if received - last_reported >= PROGRESS_REPORT_INTERVAL || received >= total {
-                    last_reported = received;
-                    let _ = event_tx.send(TransferEvent::Progress {
-                        transfer_id,
-                        bytes_transferred: received,
-                        total,
-                    });
+        log::debug!("Starting to receive zip data for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Receiving..."));
+        let mut received: u64 = 0;
+        let mut last_reported: u64 = 0;
+        let total = header.file_size;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        // tempfile() is a blocking syscall; use spawn_blocking.
+        let zip_tmpfile = spawn_blocking(tempfile)
+            .await
+            .context("Tempfile task panicked")?
+            .context("Failed to create temporary ZIP file")?;
+        let mut zip_file = tokio::fs::File::from_std(zip_tmpfile);
+        let mut cs = checksum_new();
+        loop {
+            if received >= total {
+                break;
+            }
+
+            let to_read = std::cmp::min(CHUNK_SIZE as u64, total - received) as usize;
+            match timeout(CHUNK_RECEIVE_TIMEOUT, stream.read(&mut buf[..to_read])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    cs.update(&buf[..n]);
+                    zip_file.write_all(&buf[..n]).await?;
+                    received += n as u64;
+                    if received - last_reported >= PROGRESS_REPORT_INTERVAL || received >= total {
+                        last_reported = received;
+                        let _ = event_tx.send(TransferEvent::Progress {
+                            transfer_id,
+                            bytes_transferred: received,
+                            total,
+                        });
+                    }
+                }
+                Ok(Err(e)) => {
+                    return Err(e).context("Read error");
+                }
+                Err(_elapsed) => {
+                    return Err(err!("Transfer timed out: No data received"));
                 }
             }
-            Ok(Err(e)) => {
-                let _ = event_tx.send(TransferEvent::Failed {
-                    transfer_id,
-                    error: format!("Read error: {e}"),
-                });
-                return Err(e.into());
-            }
-            Err(_elapsed) => {
-                let _ = event_tx.send(TransferEvent::Failed {
-                    transfer_id,
-                    error: "Transfer timed out: no data received".to_string(),
-                });
-                return Err(err!("Transfer timed out: no data received"));
-            }
         }
-    }
-
-    if received == 0 {
-        let _ = event_tx.send(TransferEvent::Failed {
-            transfer_id,
-            error: "No data received".to_string(),
-        });
-        return Err(err!("No data received"));
-    }
-
-    if received != total {
-        let _ = event_tx.send(TransferEvent::Failed {
-            transfer_id,
-            error: format!(
+        if received == 0 {
+            return Err(err!("No data received"));
+        }
+        if received != total {
+            return Err(err!(
                 "Incomplete transfer: received {} of {}",
                 ByteSize(received),
                 ByteSize(total)
-            ),
-        });
-        return Err(err!(
-            "Incomplete transfer: received {} of {}",
-            ByteSize(received),
-            ByteSize(total)
-        ));
-    }
+            ));
+        }
 
-    log::debug!("Verifying payload checksum for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Verifying checksum..."));
-    let computed = cs.finalize().to_le_bytes();
-    if computed != header.payload_checksum {
-        log::error!("Transfer {transfer_id}: payload checksum mismatch.");
-        let _ = event_tx.send(TransferEvent::Failed {
-            transfer_id,
-            error: "Payload checksum mismatch - data corrupted in transit".to_string(),
-        });
-        return Err(err!(
-            "Payload checksum mismatch - data corrupted in transit"
-        ));
-    }
+        log::debug!("Verifying payload checksum for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Verifying checksum..."));
+        let computed = cs.finalize().to_le_bytes();
+        if computed != header.payload_checksum {
+            return Err(err!(
+                "Payload checksum mismatch - data corrupted in transit"
+            ));
+        }
 
-    log::debug!("Extracting zip for transfer {transfer_id}...");
-    send_status(&event_tx, transfer_id, Some("Extracting..."));
-    zip_file.seek(SeekFrom::Start(0)).await?;
-    let zip_std_file = zip_file.into_std().await;
-    let save_path_clone = save_path.clone();
-    let extraction_result = tokio::task::spawn_blocking(move || {
-        if let Some(path_str) = save_path_clone.to_str() {
-            if path_str.starts_with("content://") {
-                #[cfg(target_os = "android")]
-                {
-                    extract_zip_to_android_tree(zip_std_file, path_str)
-                }
-                #[cfg(not(target_os = "android"))]
-                {
+        log::debug!("Extracting zip for transfer {transfer_id}...");
+        send_status(&event_tx, transfer_id, Some("Extracting..."));
+        zip_file.seek(SeekFrom::Start(0)).await?;
+        let zip_std_file = zip_file.into_std().await;
+        let save_path_clone = save_path.clone();
+        let extraction_result = tokio::task::spawn_blocking(move || {
+            if let Some(path_str) = save_path_clone.to_str() {
+                if path_str.starts_with("content://") {
+                    #[cfg(target_os = "android")]
+                    {
+                        extract_zip_to_android_tree(zip_std_file, path_str)
+                    }
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        extract_zip(zip_std_file, &save_path_clone)
+                    }
+                } else {
                     extract_zip(zip_std_file, &save_path_clone)
                 }
             } else {
                 extract_zip(zip_std_file, &save_path_clone)
             }
-        } else {
-            extract_zip(zip_std_file, &save_path_clone)
+        })
+        .await
+        .context("Extraction task panicked")?;
+        if let Err(e) = extraction_result {
+            return Err(e).context("Extraction failed");
         }
-    })
-    .await
-    .context("Extraction task panicked")?;
-    if let Err(e) = extraction_result {
-        let _ = event_tx.send(TransferEvent::Failed {
+
+        let _ = event_tx.send(TransferEvent::Completed {
             transfer_id,
-            error: format!("Extraction failed: {e}"),
+            save_path: Some(save_path.clone()),
         });
-        return Err(e);
+        log::info!(
+            "Transfer {transfer_id} completed, extracted to {}",
+            save_path.display()
+        );
+
+        send_status(&event_tx, transfer_id, None);
+
+        Ok(())
+    }()
+    .await;
+
+    if let Err(e) = &res {
+        log::error!("{e:?}");
+        let _ = err_event_tx.send(TransferEvent::Failed {
+            transfer_id,
+            error: format!("{e:?}"),
+        });
     }
-
-    let _ = event_tx.send(TransferEvent::Completed {
-        transfer_id,
-        save_path: Some(save_path.clone()),
-    });
-    log::info!(
-        "Transfer {transfer_id} completed, extracted to {}",
-        save_path.display()
-    );
-
-    send_status(&event_tx, transfer_id, None);
-
-    Ok(())
+    res
 }
 
 pub async fn send_path(
