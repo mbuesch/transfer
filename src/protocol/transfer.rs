@@ -50,6 +50,8 @@ const PENDING_TIMEOUT: Duration = Duration::from_secs(125);
 const ACCEPT: [u8; 2] = [0x11, 0x11 ^ 0xFF];
 /// Reject response.
 const REJECT: [u8; 2] = [0x22, 0x22 ^ 0xFF];
+/// Maximum ZIP recursion depth.
+const MAX_ZIP_DEPTH: u32 = 1024;
 
 /// Pack a file or directory into an anonymous temporary zip file.
 /// Returns the file (seeked to the start) and the zip size in bytes.
@@ -62,11 +64,20 @@ fn pack_to_zip(path: &Path) -> ah::Result<(File, u64)> {
     let zip_tmpfile = tempfile().context("Failed to create temporary ZIP file")?;
     let mut zip = ZipWriter::new(zip_tmpfile);
     let base = path.parent().unwrap_or_else(|| Path::new("."));
-    add_to_zip(&mut zip, options, base, path)?;
+    let stat = add_to_zip(&mut zip, options, base, path, ZipStat::default())?;
+    if stat.entries == 0 {
+        return Err(err!("The directory does not contain any files"));
+    }
     let mut zip_tmpfile = zip.finish()?;
     let size = zip_tmpfile.stream_position()?;
     zip_tmpfile.seek(SeekFrom::Start(0))?;
     Ok((zip_tmpfile, size))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ZipStat {
+    depth: u32,
+    entries: u32,
 }
 
 fn add_to_zip(
@@ -74,7 +85,12 @@ fn add_to_zip(
     options: SimpleFileOptions,
     base: &Path,
     entry: &Path,
-) -> ah::Result<()> {
+    mut stat: ZipStat,
+) -> ah::Result<ZipStat> {
+    stat.depth = stat.depth.saturating_add(1);
+    if stat.depth > MAX_ZIP_DEPTH {
+        return Err(err!("Maximum directory recursion depth exceeded"));
+    }
     if entry.is_dir() {
         for dir_entry in std::fs::read_dir(entry)? {
             let dir_entry = dir_entry?;
@@ -83,7 +99,7 @@ fn add_to_zip(
             if path.is_dir() {
                 zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;
             }
-            add_to_zip(zip, options, base, &path)?;
+            stat = add_to_zip(zip, options, base, &path, stat)?;
         }
     } else {
         let rel = entry.strip_prefix(base)?;
@@ -96,9 +112,10 @@ fn add_to_zip(
                 break;
             }
             zip.write_all(&buf[..n])?;
+            stat.entries = stat.entries.saturating_add(1);
         }
     }
-    Ok(())
+    Ok(stat)
 }
 
 /// Extracts a zip archive from a temporary file into `save_path`.
