@@ -74,8 +74,25 @@ You can run it directly; typically by double-clicking it.
 
 ### Android
 
-Before running the Android build script, ensure you have the Android NDK and SDK installed and properly configured.
-The easiest way to get them is to install [Android Studio](https://developer.android.com/studio), which includes both.
+If you do not want to build the app yourself, you can download the latest APK from
+[Github CI](https://github.com/mbuesch/transfer/actions/workflows/ci.yml).
+Pick the latest successful run from the `main` branch and download the `transfer-android-app-aarch64` artifact.
+The provided APK is meant for ADB (USB) sideloading.
+Proceed with `android-install.sh` from that artifact (see below) for sideloading.
+
+Note that the APK is signed with a debug key and is only provided on a best-effort basis.
+It should work properly, but it's not regularly tested.
+If there are problems with the pre-built APK, please file an issue.
+
+### If you want to build the app yourself, follow these steps
+
+First install [Rust](https://www.rust-lang.org/tools/install) on the build PC (Linux).
+
+Before running the Android build script, ensure you have the Android NDK and SDK installed and properly configured on the build PC.
+The easiest way to get them is to install
+[Android Studio](https://developer.android.com/studio),
+and use the
+[Dioxus install tutorial](https://dioxuslabs.com/learn/0.7/guides/platforms/mobile).
 For the build script to work, you need to set the some environment variables to point to your Android NDK and SDK installations.
 
 ```sh
@@ -90,13 +107,13 @@ export ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/VERSION"
 export PATH="$HOME/Android/Sdk/platform-tools/:$PATH"
 ```
 
-Use the provided script to build the Android packages:
+On the build PC (Linux) run the provided script to build the Android packages:
 
 ```sh
 ./android-build.sh
 ```
 
-Install the generated APK on your Android device (via ADB).
+Install the generated APK on your Android device (via ADB sideloading).
 Plug in your Android device, ensure Developer Mode, USB debugging and Sideloading are enabled, and run:
 
 ```sh
