@@ -235,6 +235,7 @@ pub async fn run_transfer_server(
                     Ok(v) => v,
                     Err(e) => {
                         log::error!("Accept error: {e}");
+                        sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
