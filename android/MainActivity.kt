@@ -16,13 +16,17 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
+import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 typealias BuildConfig = BuildConfig // re-export
@@ -43,6 +47,7 @@ class MainActivity : WryActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         instance = this
+        cleanupStaleCacheImports(this)
         // Acquire locks BEFORE the native library starts so that multicast/broadcast
         // delivery is enabled from the very first packet.
         acquireWifiLocks()
@@ -148,6 +153,12 @@ class MainActivity : WryActivity() {
     companion object {
         @JvmStatic @Volatile
         var instance: MainActivity? = null
+
+        private const val CACHE_IMPORT_PREFIX = "import-"
+        private const val MAX_CACHE_NAME_BYTES = 200
+        private const val MAX_CACHE_EXTENSION_CHARS = 16
+
+        private val staleCacheCleanupStarted = AtomicBoolean(false)
 
         private val copyStatusMessage = java.util.concurrent.atomic.AtomicReference<String?>(null)
 
@@ -278,21 +289,102 @@ class MainActivity : WryActivity() {
 
         private fun copyUriToCache(activity: Activity, uri: Uri): String? {
             copyStatusMessage.set("Caching file...")
+            var importDir: File? = null
             try {
                 val inputStream = activity.contentResolver.openInputStream(uri)
-                    ?: return null
-                val fileName = queryFileName(activity, uri) ?: "picked_file"
-                val cacheFile = File(activity.cacheDir, fileName)
+                    ?: throw IOException("Failed to open selected file")
                 inputStream.use { input ->
+                    val dir = createCacheImportDirectory(activity)
+                    importDir = dir
+                    val cacheFile = uniqueCacheChild(
+                        dir,
+                        queryFileName(activity, uri),
+                        "picked_file",
+                    )
                     cacheFile.outputStream().use { output ->
                         input.copyTo(output)
                     }
+                    return cacheFile.absolutePath
                 }
-                return cacheFile.absolutePath
             } catch (e: Exception) {
+                discardFailedCacheImport(importDir, e, "file")
                 return null
             } finally {
                 copyStatusMessage.set(null)
+            }
+        }
+
+        // Every import lives in its own directory below the cache directory. Nothing
+        // removes it while the app runs, because a transfer may still read from it.
+        // Leftovers of earlier app runs are removed once per process start.
+        private fun cleanupStaleCacheImports(activity: Activity) {
+            if (!staleCacheCleanupStarted.compareAndSet(false, true)) return
+            val stale = activity.cacheDir.listFiles { file ->
+                file.isDirectory && file.name.startsWith(CACHE_IMPORT_PREFIX)
+            }
+            if (stale.isNullOrEmpty()) return
+            Thread {
+                for (dir in stale) {
+                    if (!dir.deleteRecursively()) {
+                        Log.w("MainActivity", "Failed to remove stale cache import")
+                    }
+                }
+            }.start()
+        }
+
+        private fun createCacheImportDirectory(activity: Activity): File {
+            val importDir = File(activity.cacheDir, "$CACHE_IMPORT_PREFIX${UUID.randomUUID()}")
+            if (!importDir.mkdir()) {
+                throw IOException("Failed to create cache import directory")
+            }
+            return importDir
+        }
+
+        private fun uniqueCacheChild(parent: File, displayName: String?, fallback: String): File {
+            val safeName = (displayName ?: fallback)
+                .replace('/', '_')
+                .replace('\\', '_')
+                .replace('\u0000', '_')
+                .takeUnless { it.isBlank() || it == "." || it == ".." }
+                ?.let(::limitFileNameLength)
+                ?: fallback
+            val initial = File(parent, safeName)
+            if (!initial.exists()) return initial
+
+            val dotPos = safeName.lastIndexOf('.')
+            val baseName = if (dotPos > 0) safeName.substring(0, dotPos) else safeName
+            val extension = if (dotPos > 0) safeName.substring(dotPos) else ""
+            for (i in 1..10000) {
+                val candidate = File(parent, "$baseName ($i)$extension")
+                if (!candidate.exists()) return candidate
+            }
+            throw IOException("Failed to create a unique cache entry name")
+        }
+
+        // File system limit is 255 bytes. Keep room for the " (N)" collision suffix.
+        private fun limitFileNameLength(name: String): String {
+            if (name.toByteArray().size <= MAX_CACHE_NAME_BYTES) return name
+            val dotPos = name.lastIndexOf('.')
+            val extension = if (dotPos > 0 && name.length - dotPos <= MAX_CACHE_EXTENSION_CHARS) {
+                name.substring(dotPos)
+            } else {
+                ""
+            }
+            var base = name.substring(0, name.length - extension.length)
+            val extensionBytes = extension.toByteArray().size
+            while (base.isNotEmpty() && base.toByteArray().size + extensionBytes > MAX_CACHE_NAME_BYTES) {
+                base = base.dropLast(1)
+            }
+            if (base.isNotEmpty() && base.last().isHighSurrogate()) {
+                base = base.dropLast(1)
+            }
+            return base + extension
+        }
+
+        private fun discardFailedCacheImport(importDir: File?, error: Exception, kind: String) {
+            Log.e("MainActivity", "Failed to cache $kind import", error)
+            if (importDir != null && importDir.exists() && !importDir.deleteRecursively()) {
+                Log.w("MainActivity", "Failed to remove partial cache import")
             }
         }
 
@@ -436,16 +528,23 @@ class MainActivity : WryActivity() {
 
         private fun copyTreeUriToCache(activity: Activity, treeUri: Uri): String? {
             copyStatusMessage.set("Caching folder...")
+            var importDir: File? = null
             return try {
-                val folderName = getFolderDisplayName(activity, treeUri) ?: "picked_folder"
-                val destDir = File(activity.cacheDir, folderName)
-                if (destDir.exists()) destDir.deleteRecursively()
-                destDir.mkdirs()
+                importDir = createCacheImportDirectory(activity)
+                val destDir = uniqueCacheChild(
+                    importDir,
+                    getFolderDisplayName(activity, treeUri),
+                    "picked_folder",
+                )
+                if (!destDir.mkdir()) {
+                    throw IOException("Failed to create cached folder")
+                }
                 val docId = DocumentsContract.getTreeDocumentId(treeUri)
                 val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
                 copyDocumentTree(activity, treeUri, rootDocUri, destDir)
                 destDir.absolutePath
             } catch (e: Exception) {
+                discardFailedCacheImport(importDir, e, "folder")
                 null
             } finally {
                 copyStatusMessage.set(null)
@@ -478,7 +577,9 @@ class MainActivity : WryActivity() {
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
             )
-            activity.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+            val cursor = activity.contentResolver.query(childrenUri, projection, null, null, null)
+                ?: throw IOException("Failed to list selected folder")
+            cursor.use {
                 while (cursor.moveToNext()) {
                     val childDocId = cursor.getString(
                         cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
@@ -491,14 +592,18 @@ class MainActivity : WryActivity() {
                     )
                     val childDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocId)
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        val subDir = File(destDir, displayName)
-                        subDir.mkdirs()
+                        val subDir = uniqueCacheChild(destDir, displayName, "picked_folder")
+                        if (!subDir.mkdir()) {
+                            throw IOException("Failed to create cached subfolder")
+                        }
                         copyDocumentTree(activity, treeUri, childDocUri, subDir)
                     } else {
-                        val destFile = File(destDir, displayName)
-                        activity.contentResolver.openInputStream(childDocUri)?.use { input ->
+                        val destFile = uniqueCacheChild(destDir, displayName, "picked_file")
+                        val input = activity.contentResolver.openInputStream(childDocUri)
+                            ?: throw IOException("Failed to open file in selected folder")
+                        input.use {
                             destFile.outputStream().use { output ->
-                                input.copyTo(output)
+                                it.copyTo(output)
                             }
                         }
                     }
