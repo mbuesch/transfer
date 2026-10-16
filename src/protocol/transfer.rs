@@ -705,7 +705,10 @@ pub async fn send_path(
             }
         }
 
-        stream.shutdown().await.context("Finishing transfer failed")?;
+        stream
+            .shutdown()
+            .await
+            .context("Finishing transfer failed")?;
         send_status(&event_tx, transfer_id, None);
         let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
         log::info!("Transfer {transfer_id} completed: {}", path.display());

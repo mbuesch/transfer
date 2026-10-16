@@ -80,7 +80,9 @@ impl DiscoveryPacket {
 #[derive(Debug, Clone, Default, rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 pub struct TransferHeader {
     pub filename: FixedStr<512>,
+    /// Compressed file size
     pub file_size: u64,
+    //TODO: Add uncompressed file size and display that to the user.
     pub sender_name: FixedStr<64>,
     pub header_checksum: [u8; 8],
     pub payload_checksum: [u8; 8],
