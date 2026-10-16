@@ -21,6 +21,7 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
@@ -51,6 +52,7 @@ class MainActivity : WryActivity() {
         (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
             .registerNetworkCallback(request, networkCallback)
         super.onCreate(savedInstanceState)
+        reattachPendingPicks(this)
         handleShareIntent(intent)
     }
 
@@ -80,6 +82,9 @@ class MainActivity : WryActivity() {
         releaseWifiLocks()
         if (instance === this) {
             instance = null
+        }
+        if (isFinishing) {
+            cancelPendingPicks()
         }
         super.onDestroy()
     }
@@ -207,29 +212,68 @@ class MainActivity : WryActivity() {
             val resultRef = AtomicReference<T?>()
             val key = "rust_activity_${System.nanoTime()}"
 
-            Handler(Looper.getMainLooper()).post {
-                lateinit var launcher: ActivityResultLauncher<Intent>
-                launcher = activity.activityResultRegistry.register(
-                    key,
-                    ActivityResultContracts.StartActivityForResult()
-                ) { result: ActivityResult ->
+            val pending = PendingPick(
+                onResult = { result ->
                     if (result.resultCode == Activity.RESULT_OK) {
                         resultRef.set(handleResult(result.data))
                     }
                     latch.countDown()
-                    launcher.unregister()
-                }
+                },
+                onCancel = { latch.countDown() },
+            )
+            pendingPicks[key] = pending
 
+            Handler(Looper.getMainLooper()).post {
+                val launcher = registerPending(activity, key, pending)
                 try {
                     launcher.launch(createIntent())
                 } catch (_: Exception) {
-                    latch.countDown()
+                    pendingPicks.remove(key)
                     launcher.unregister()
+                    latch.countDown()
                 }
             }
 
             latch.await()
             return resultRef.get()
+        }
+
+        private class PendingPick(
+            val onResult: (ActivityResult) -> Unit,
+            val onCancel: () -> Unit,
+        )
+
+        private val pendingPicks = ConcurrentHashMap<String, PendingPick>()
+
+        private fun registerPending(
+            activity: ComponentActivity,
+            key: String,
+            pending: PendingPick,
+        ): ActivityResultLauncher<Intent> {
+            lateinit var launcher: ActivityResultLauncher<Intent>
+            launcher = activity.activityResultRegistry.register(
+                key,
+                ActivityResultContracts.StartActivityForResult()
+            ) { result: ActivityResult ->
+                pendingPicks.remove(key)
+                launcher.unregister()
+                pending.onResult(result)
+            }
+            return launcher
+        }
+
+        // Re-attach in-flight pickers to a recreated Activity so the registry
+        // can deliver the result that arrived while the old one was destroyed.
+        private fun reattachPendingPicks(activity: ComponentActivity) {
+            for ((key, pending) in pendingPicks) {
+                registerPending(activity, key, pending)
+            }
+        }
+
+        private fun cancelPendingPicks() {
+            val all = pendingPicks.values.toList()
+            pendingPicks.clear()
+            all.forEach { it.onCancel() }
         }
 
         private fun copyUriToCache(activity: Activity, uri: Uri): String? {
