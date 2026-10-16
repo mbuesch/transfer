@@ -1,4 +1,5 @@
 use crate::{
+    ip_support::IpSupport,
     ipc::{IncomingTransfer, TransferCommand, TransferEvent, TransferStatus},
     protocol::packets::{TransferHeader, checksum_new},
 };
@@ -11,7 +12,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{Read as _, Seek as _, SeekFrom, Write as _},
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
+    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -166,8 +167,15 @@ fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
 
 /// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
 fn create_tcp_listener(port: u16) -> ah::Result<TcpListener> {
-    let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
-    sock.set_only_v6(false)?; // Accept IPv4-mapped addresses as well
+    let sock = match IpSupport::get() {
+        IpSupport::V4 => Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?,
+        IpSupport::V6 => Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?,
+        IpSupport::Both => {
+            let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+            sock.set_only_v6(false)?; // Accept IPv4-mapped addresses as well
+            sock
+        }
+    };
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
     sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
@@ -202,21 +210,13 @@ pub async fn run_transfer_server(
     mut cmd_rx: mpsc::UnboundedReceiver<TransferCommand>,
 ) {
     let listener = match create_tcp_listener(port) {
-        Ok(l) => {
-            log::info!("Transfer server listening on [::]:{port} (dual-stack)");
-            l
-        }
+        Ok(l) => l,
         Err(e) => {
-            log::warn!("IPv6 dual-stack unavailable ({e}), falling back to IPv4");
-            match TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
-                Ok(l) => l,
-                Err(e) => {
-                    log::error!("Failed to bind transfer server on port {port}: {e}");
-                    return;
-                }
-            }
+            log::error!("Failed to create TCP listener on port {port}: {e}");
+            return;
         }
     };
+    log::info!("Transfer server listening on port {port}");
 
     let pending = Arc::new(Mutex::new(HashMap::new()));
 
