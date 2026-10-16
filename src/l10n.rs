@@ -6,10 +6,22 @@ static FORCED_LANGUAGE: OnceLock<Language> = OnceLock::new();
 
 #[cfg(not(target_os = "android"))]
 fn system_locale() -> String {
-    std::env::var("LANG")
-        .or_else(|_| std::env::var("LC_ALL"))
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .unwrap_or_default()
+    if let Ok(l) = std::env::var("LC_ALL")
+        && !l.is_empty()
+    {
+        return l;
+    }
+    if let Ok(l) = std::env::var("LC_MESSAGES")
+        && !l.is_empty()
+    {
+        return l;
+    }
+    if let Ok(l) = std::env::var("LANG")
+        && !l.is_empty()
+    {
+        return l;
+    }
+    String::new()
 }
 
 #[cfg(target_os = "android")]
