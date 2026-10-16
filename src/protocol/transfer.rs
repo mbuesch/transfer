@@ -88,7 +88,6 @@ fn add_to_zip(
     entry: &Path,
     mut stat: ZipStat,
 ) -> ah::Result<ZipStat> {
-    stat.depth = stat.depth.saturating_add(1);
     if stat.depth > MAX_ZIP_DEPTH {
         return Err(err!("Maximum directory recursion depth exceeded"));
     }
@@ -100,7 +99,17 @@ fn add_to_zip(
             if path.is_dir() {
                 zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;
             }
-            stat = add_to_zip(zip, options, base, &path, stat)?;
+            stat.entries = add_to_zip(
+                zip,
+                options,
+                base,
+                &path,
+                ZipStat {
+                    depth: stat.depth.saturating_add(1),
+                    entries: stat.entries,
+                },
+            )?
+            .entries;
         }
     } else {
         let rel = entry.strip_prefix(base)?;
