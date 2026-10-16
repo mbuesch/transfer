@@ -1,3 +1,6 @@
+#[cfg(not(any(feature = "ipv4", feature = "ipv6")))]
+std::compile_error!("At least one of the features 'ipv4' or 'ipv6' must be enabled.");
+
 use std::sync::OnceLock;
 
 static IP_SUPPORT: OnceLock<IpSupport> = OnceLock::new();
@@ -14,6 +17,12 @@ pub enum IpSupport {
 
 impl IpSupport {
     pub fn get() -> Self {
+        if !cfg!(feature = "ipv4") {
+            return IpSupport::V6;
+        }
+        if !cfg!(feature = "ipv6") {
+            return IpSupport::V4;
+        }
         IP_SUPPORT.get().copied().unwrap_or(IpSupport::default())
     }
 

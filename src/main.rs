@@ -78,20 +78,18 @@ async fn main() -> ah::Result<()> {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("transfer"),
     );
-    #[cfg(not(target_os = "android"))]
-    env_logger::init();
 
     #[cfg(not(target_os = "android"))]
-    let args = Args::parse();
-
-    #[cfg(not(target_os = "android"))]
-    if args.tokio_console {
-        console_subscriber::init();
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
+    let args = {
         use crate::ip_support::IpSupport;
+
+        env_logger::init();
+
+        let args = Args::parse();
+
+        if args.tokio_console {
+            console_subscriber::init();
+        }
 
         #[cfg(all(feature = "ipv4", feature = "ipv6"))]
         if args.ipv4 && !args.ipv6 {
@@ -100,7 +98,7 @@ async fn main() -> ah::Result<()> {
             IpSupport::V6.set();
         }
 
-        if let Some(lang_str) = args.lang {
+        if let Some(lang_str) = &args.lang {
             match lang_str.to_lowercase().as_str() {
                 "auto" => (),
                 "de" => l10n::Language::set_forced(l10n::Language::De),
@@ -108,7 +106,9 @@ async fn main() -> ah::Result<()> {
                 _ => l10n::Language::set_forced(l10n::Language::En),
             }
         }
-    }
+
+        args
+    };
 
     #[cfg(target_os = "android")]
     let builder = dioxus::LaunchBuilder::mobile();
