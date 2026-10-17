@@ -17,9 +17,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-#[cfg(target_os = "android")]
-use tempfile::tempdir;
-use tempfile::tempfile;
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -54,6 +51,23 @@ const REJECT: [u8; 2] = [0x22, 0x22 ^ 0xFF];
 /// Maximum ZIP recursion depth.
 const MAX_ZIP_DEPTH: u32 = 1024;
 
+/// Create an anonymous temporary file.
+fn create_temp_file() -> ah::Result<File> {
+    #[cfg(target_os = "android")]
+    let file = tempfile::tempfile_in(crate::android_interface::android_cache_dir()?);
+
+    #[cfg(not(target_os = "android"))]
+    let file = tempfile::tempfile();
+
+    Ok(file?)
+}
+
+/// Create a temporary directory.
+#[cfg(target_os = "android")]
+fn create_temp_dir() -> ah::Result<tempfile::TempDir> {
+    Ok(tempfile::tempdir_in(crate::android_interface::android_cache_dir()?)?)
+}
+
 /// Pack a file or directory into an anonymous temporary zip file.
 /// Returns the file (seeked to the start) and the zip size in bytes.
 ///
@@ -62,7 +76,7 @@ fn pack_to_zip(path: &Path) -> ah::Result<(File, u64)> {
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Zstd)
         .compression_level(Some(COMPRESSION_LEVEL));
-    let zip_tmpfile = tempfile().context("Failed to create temporary ZIP file")?;
+    let zip_tmpfile = create_temp_file().context("Failed to create temporary ZIP file")?;
     let mut zip = ZipWriter::new(zip_tmpfile);
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     let stat = add_to_zip(&mut zip, options, base, path, ZipStat::default())?;
@@ -168,7 +182,7 @@ fn extract_zip(file: File, save_path: &Path) -> ah::Result<()> {
 
 #[cfg(target_os = "android")]
 fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
-    let temp_dir = tempdir().context("Failed to create temporary extraction directory")?;
+    let temp_dir = create_temp_dir().context("Failed to create temporary extraction directory")?;
     let save_path = temp_dir.path();
     extract_zip(file, save_path)?;
     android_copy_folder_to_tree(tree_uri, save_path)
@@ -484,8 +498,8 @@ async fn receive_file(
         let mut last_reported: u64 = 0;
         let total = header.file_size;
         let mut buf = vec![0u8; CHUNK_SIZE];
-        // tempfile() is a blocking syscall; use spawn_blocking.
-        let zip_tmpfile = spawn_blocking(tempfile)
+        // Creating the file is a blocking syscall; use spawn_blocking.
+        let zip_tmpfile = spawn_blocking(create_temp_file)
             .await
             .context("Tempfile task panicked")?
             .context("Failed to create temporary ZIP file")?;

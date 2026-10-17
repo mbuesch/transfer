@@ -1,6 +1,42 @@
 use crate::l10n::Language;
 use anyhow as ah;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::OnceLock};
+
+static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Per-app cache directory (`Context.getCacheDir()`).
+/// `std::env::temp_dir()` is only app-writable on Android 13+, so use this instead.
+pub fn android_cache_dir() -> ah::Result<PathBuf> {
+    if let Some(dir) = CACHE_DIR.get() {
+        return Ok(dir.clone());
+    }
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { ::jni::JavaVM::from_raw(ctx.vm().cast()) };
+    let dir = vm
+        .attach_current_thread(|env| -> Result<String, ::jni::errors::Error> {
+            let activity = unsafe { ::jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+            let file = env
+                .call_method(
+                    &activity,
+                    ::jni::jni_str!("getCacheDir"),
+                    ::jni::jni_sig!("()Ljava/io/File;"),
+                    &[],
+                )?
+                .l()?;
+            let path = env
+                .call_method(
+                    &file,
+                    ::jni::jni_str!("getAbsolutePath"),
+                    ::jni::jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let jstr = env.cast_local::<::jni::objects::JString>(path)?;
+            jstr.try_to_string(env)
+        })
+        .map_err(|e| ah::format_err!("Failed to query Android cache dir: {e}"))?;
+    Ok(CACHE_DIR.get_or_init(|| PathBuf::from(dir)).clone())
+}
 
 /// Drain file paths shared via Android's share intent (ACTION_SEND / ACTION_SEND_MULTIPLE).
 pub fn android_get_shared_files() -> Vec<PathBuf> {
