@@ -24,7 +24,7 @@
 
 - **MANDATORY:** Always run `cargo clippy` after making changes and address warnings; prefer clippy over relying solely on `cargo build`.
 - **MANDATORY:** After changing code, run `cargo fmt && dx fmt` to ensure consistent formatting.
-- **MANDATORY:** After changing anything Android/Kotlin/Java related, run `android-build.sh`.
+- **MANDATORY:** After changing anything Android/Kotlin/Java related, run `./android-build.sh`.
 
 ## Crate versions
 
