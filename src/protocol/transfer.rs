@@ -48,6 +48,13 @@ const PENDING_TIMEOUT: Duration = Duration::from_secs(125);
 const ACCEPT: [u8; 2] = [0x11, 0x11 ^ 0xFF];
 /// Reject response.
 const REJECT: [u8; 2] = [0x22, 0x22 ^ 0xFF];
+/// Final receiver verdict: payload verified and extracted successfully.
+/// Older receivers never send it; they just close the connection.
+const FINAL_OK: [u8; 2] = [0x33, 0x33 ^ 0xFF];
+/// Final receiver verdict: checksum verification or extraction failed.
+const FINAL_FAIL: [u8; 2] = [0x44, 0x44 ^ 0xFF];
+/// How long the sender waits for the receiver's final verdict after sending all data.
+const FINAL_TIMEOUT: Duration = Duration::from_secs(600);
 /// Maximum ZIP recursion depth.
 const MAX_ZIP_DEPTH: u32 = 1024;
 
@@ -491,7 +498,7 @@ async fn receive_file(
 ) -> ah::Result<()> {
     let err_event_tx = event_tx.clone();
 
-    let res = async move || -> ah::Result<()> {
+    let res = async || -> ah::Result<()> {
         log::debug!("Accepting transfer {transfer_id}...");
         send_status(&event_tx, transfer_id, true, Some("Accepting..."));
         if let Err(e) = stream.write_all(&ACCEPT).await {
@@ -603,6 +610,11 @@ async fn receive_file(
         Ok(())
     }()
     .await;
+
+    // Older senders ignore this verdict and have already closed the connection.
+    let verdict = if res.is_ok() { FINAL_OK } else { FINAL_FAIL };
+    let _ = stream.write_all(&verdict).await;
+    let _ = stream.shutdown().await;
 
     if let Err(e) = &res {
         log::error!("{e:?}");
@@ -759,6 +771,38 @@ pub async fn send_path(
             .shutdown()
             .await
             .context("Finishing transfer failed")?;
+
+        // Newer receivers send a final verdict; older ones just close (EOF),
+        // which is treated as success for backward compatibility.
+        send_status(
+            &event_tx,
+            transfer_id,
+            false,
+            Some("Waiting for confirmation..."),
+        );
+        let mut verdict = [0u8; 2];
+        match timeout(FINAL_TIMEOUT, stream.read_exact(&mut verdict)).await {
+            Ok(Ok(_)) => match verdict {
+                FINAL_OK => (),
+                FINAL_FAIL => {
+                    return Err(err!(
+                        "Receiver reported failure (checksum mismatch or extraction error)"
+                    ));
+                }
+                _ => {
+                    return Err(err!("Invalid final response from receiver"));
+                }
+            },
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                log::debug!("Receiver closed without final verdict (legacy peer)");
+            }
+            Ok(Err(e)) => {
+                log::debug!("Final verdict read error (treated as legacy peer): {e}");
+            }
+            Err(_) => {
+                log::warn!("Timed out waiting for final verdict; assuming success");
+            }
+        }
         send_status(&event_tx, transfer_id, false, None);
         let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
         log::info!("Transfer {transfer_id} completed: {}", path.display());
