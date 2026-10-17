@@ -140,9 +140,7 @@ impl Language {
 
     pub fn no_devices_hint(self) -> &'static str {
         match self {
-            Language::En => {
-                "Make sure Transfer is running another device on the same network."
-            }
+            Language::En => "Make sure Transfer is running another device on the same network.",
             Language::De => {
                 "Stelle sicher, dass Datei-Transfer auf einem anderen Gerät im selben Netzwerk läuft."
             }
