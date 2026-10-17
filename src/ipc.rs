@@ -73,8 +73,9 @@ pub enum TransferEvent {
     },
     /// A human-readable status update for a single step within a transfer.
     StatusUpdate {
-        #[allow(dead_code)]
         transfer_id: u64,
+        /// `true` for incoming transfers, `false` for outgoing ones.
+        incoming: bool,
         message: Option<String>,
     },
 }

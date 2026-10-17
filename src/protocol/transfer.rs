@@ -225,10 +225,12 @@ fn create_tcp_listener(port: u16) -> ah::Result<TcpListener> {
 fn send_status(
     event_tx: &mpsc::UnboundedSender<TransferEvent>,
     transfer_id: u64,
+    incoming: bool,
     msg: Option<&str>,
 ) {
     let _ = event_tx.send(TransferEvent::StatusUpdate {
         transfer_id,
+        incoming,
         message: msg.map(|s| s.to_string()),
     });
 }
@@ -350,7 +352,7 @@ async fn handle_incoming_connection(
 
     let res = async move || -> ah::Result<()> {
         log::debug!("Read header for incoming transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Reading header..."));
+        send_status(&event_tx, transfer_id, true, Some("Reading header..."));
         let mut header_buf = AlignedVec::<16>::with_capacity(TransferHeader::size());
         header_buf.resize(TransferHeader::size(), 0);
         match timeout(HEADER_TIMEOUT, stream.read_exact(&mut header_buf)).await {
@@ -366,10 +368,11 @@ async fn handle_incoming_connection(
             .context("Decode sender name failed")?;
 
         log::debug!("Verifying header checksum for incoming transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Verifying header..."));
+        send_status(&event_tx, transfer_id, true, Some("Verifying header..."));
         if !header.verify_header_checksum() {
             return Err(err!("Header checksum mismatch"));
         }
+        send_status(&event_tx, transfer_id, true, None);
 
         log::info!(
             "Incoming transfer from {}: {} ({})",
@@ -427,6 +430,7 @@ async fn handle_incoming_connection(
 
     if let Err(e) = &res {
         log::error!("{e:?}");
+        send_status(&err_event_tx, transfer_id, true, None);
         let _ = err_event_tx.send(TransferEvent::Failed {
             transfer_id,
             error: format!("{e:?}"),
@@ -489,13 +493,13 @@ async fn receive_file(
 
     let res = async move || -> ah::Result<()> {
         log::debug!("Accepting transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Accepting..."));
+        send_status(&event_tx, transfer_id, true, Some("Accepting..."));
         if let Err(e) = stream.write_all(&ACCEPT).await {
             return Err(e).context("Failed to send accept");
         }
 
         log::debug!("Starting to receive zip data for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Receiving..."));
+        send_status(&event_tx, transfer_id, true, Some("Receiving..."));
         let mut received: u64 = 0;
         let mut last_reported: u64 = 0;
         let total = header.file_size;
@@ -548,7 +552,7 @@ async fn receive_file(
         }
 
         log::debug!("Verifying payload checksum for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Verifying checksum..."));
+        send_status(&event_tx, transfer_id, true, Some("Verifying checksum..."));
         let computed = cs.finalize().to_le_bytes();
         if computed != header.payload_checksum {
             return Err(err!(
@@ -557,7 +561,7 @@ async fn receive_file(
         }
 
         log::debug!("Extracting zip for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Extracting..."));
+        send_status(&event_tx, transfer_id, true, Some("Extracting..."));
         zip_file.seek(SeekFrom::Start(0)).await?;
         let zip_std_file = zip_file.into_std().await;
         let save_path_clone = save_path.clone();
@@ -594,7 +598,7 @@ async fn receive_file(
             save_path.display()
         );
 
-        send_status(&event_tx, transfer_id, None);
+        send_status(&event_tx, transfer_id, true, None);
 
         Ok(())
     }()
@@ -626,7 +630,7 @@ pub async fn send_path(
             .unwrap_or_else(|| "unknown".to_string());
 
         log::debug!("Packing {} for transfer {transfer_id}", path.display());
-        send_status(&event_tx, transfer_id, Some("Packing..."));
+        send_status(&event_tx, transfer_id, false, Some("Packing..."));
         let path_clone = path.clone();
         let (zip_std_file, zip_size) =
             match tokio::task::spawn_blocking(move || pack_to_zip(&path_clone))
@@ -643,7 +647,12 @@ pub async fn send_path(
         }
 
         log::debug!("Calculating checksum for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Calculating checksum..."));
+        send_status(
+            &event_tx,
+            transfer_id,
+            false,
+            Some("Calculating checksum..."),
+        );
         let (zip_std_file, payload_checksum) =
             tokio::task::spawn_blocking(move || -> ah::Result<_> {
                 let mut zip_std_file = zip_std_file;
@@ -668,7 +677,7 @@ pub async fn send_path(
             "Connecting to {} for transfer {transfer_id}...",
             target_addr
         );
-        send_status(&event_tx, transfer_id, Some("Connecting..."));
+        send_status(&event_tx, transfer_id, false, Some("Connecting..."));
         let mut stream = match TcpStream::connect(target_addr).await {
             Ok(s) => s,
             Err(e) => {
@@ -677,7 +686,7 @@ pub async fn send_path(
         };
 
         log::debug!("Sending header for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Sending header..."));
+        send_status(&event_tx, transfer_id, false, Some("Sending header..."));
         let header = TransferHeader::new(&name, zip_size, &sender_name, payload_checksum)?;
         let header_bytes = match header.serialize() {
             Ok(b) => b,
@@ -690,7 +699,12 @@ pub async fn send_path(
         }
 
         log::debug!("Waiting for accept/reject response for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Waiting for response..."));
+        send_status(
+            &event_tx,
+            transfer_id,
+            false,
+            Some("Waiting for response..."),
+        );
         let mut response_buf = [0u8; 2];
         match timeout(RESPONSE_TIMEOUT, stream.read_exact(&mut response_buf)).await {
             Ok(Ok(_)) => match response_buf {
@@ -714,7 +728,7 @@ pub async fn send_path(
         }
 
         log::debug!("Starting zip stream for transfer {transfer_id}...");
-        send_status(&event_tx, transfer_id, Some("Sending..."));
+        send_status(&event_tx, transfer_id, false, Some("Sending..."));
         let total = zip_size;
         let mut sent: u64 = 0;
         let mut last_reported: u64 = 0;
@@ -745,7 +759,7 @@ pub async fn send_path(
             .shutdown()
             .await
             .context("Finishing transfer failed")?;
-        send_status(&event_tx, transfer_id, None);
+        send_status(&event_tx, transfer_id, false, None);
         let _ = event_tx.send(TransferEvent::SendCompleted { transfer_id });
         log::info!("Transfer {transfer_id} completed: {}", path.display());
 

@@ -66,6 +66,8 @@ pub fn App() -> Element {
     let mut status_msg = use_signal(|| detected_lang.starting().to_string());
     let mut transfer_step_status: Signal<Option<String>> = use_signal(|| None);
     let mut transfer_step_status_gen: Signal<u64> = use_signal(|| 0_u64);
+    // Latest step message per (incoming, transfer id); the header shows the most recent one.
+    let mut transfer_steps: Signal<Vec<(bool, u64, String)>> = use_signal(Vec::new);
     let mut active_tab = use_signal(|| ActiveTab::Network);
     let next_send_id = use_signal(|| 1_u64);
     let shared_files: Signal<Vec<PathBuf>> = use_signal(Vec::new);
@@ -294,6 +296,9 @@ pub fn App() -> Element {
                             }
                         }
                         TransferEvent::Failed { transfer_id, error } => {
+                            transfer_steps
+                                .write()
+                                .retain(|(inc, id, _)| !(*inc && *id == transfer_id));
                             let mut should_purge = false;
                             {
                                 let mut list = incoming_transfers.write();
@@ -353,6 +358,9 @@ pub fn App() -> Element {
                             }
                         }
                         TransferEvent::SendFailed { transfer_id, error } => {
+                            transfer_steps
+                                .write()
+                                .retain(|(inc, id, _)| !(!*inc && *id == transfer_id));
                             let mut should_purge = false;
                             {
                                 let mut list = outgoing_transfers.write();
@@ -379,9 +387,23 @@ pub fn App() -> Element {
                                 });
                             }
                         }
-                        TransferEvent::StatusUpdate { message, .. } => {
+                        TransferEvent::StatusUpdate {
+                            transfer_id,
+                            incoming,
+                            message,
+                        } => {
+                            let current = {
+                                let mut steps = transfer_steps.write();
+                                steps.retain(|(inc, id, _)| {
+                                    !(*inc == incoming && *id == transfer_id)
+                                });
+                                if let Some(m) = message {
+                                    steps.push((incoming, transfer_id, m));
+                                }
+                                steps.last().map(|(_, _, m)| m.clone())
+                            };
                             *transfer_step_status_gen.write() += 1;
-                            transfer_step_status.set(message);
+                            transfer_step_status.set(current);
                         }
                     }
                 }
