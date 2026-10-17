@@ -98,6 +98,7 @@ fn add_to_zip(
             let rel = path.strip_prefix(base)?;
             if path.is_dir() {
                 zip.add_directory(format!("{}/", rel.to_string_lossy()), options)?;
+                stat.entries = stat.entries.saturating_add(1);
             }
             stat.entries = add_to_zip(
                 zip,
@@ -122,8 +123,8 @@ fn add_to_zip(
                 break;
             }
             zip.write_all(&buf[..n])?;
-            stat.entries = stat.entries.saturating_add(1);
         }
+        stat.entries = stat.entries.saturating_add(1);
     }
     Ok(stat)
 }
