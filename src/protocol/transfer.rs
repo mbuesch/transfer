@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{Read as _, Seek as _, SeekFrom, Write as _},
-    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -174,20 +174,30 @@ fn extract_zip_to_android_tree(file: File, tree_uri: &str) -> ah::Result<()> {
         .context("Failed to copy extracted files to selected Android folder")
 }
 
-/// Creates a dual-stack TCP listener that accepts both IPv4 and IPv6 connections.
+/// Creates a TCP listener that accepts both IPv4 and IPv6 connections (if enabled).
 fn create_tcp_listener(port: u16) -> ah::Result<TcpListener> {
-    let sock = match IpSupport::get() {
-        IpSupport::V4 => Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?,
-        IpSupport::V6 => Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?,
+    let (sock, addr) = match IpSupport::get() {
+        IpSupport::V4 => {
+            let sock = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+            let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
+            (sock, addr.into())
+        }
+        IpSupport::V6 => {
+            let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+            sock.set_only_v6(true)?;
+            let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
+            (sock, addr.into())
+        }
         IpSupport::Both => {
             let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
             sock.set_only_v6(false)?; // Accept IPv4-mapped addresses as well
-            sock
+            let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
+            (sock, addr.into())
         }
     };
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
-    sock.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
+    sock.bind(&addr)?;
     sock.listen(128)?;
     let std_listener: std::net::TcpListener = sock.into();
     let listener = TcpListener::from_std(std_listener)?;
