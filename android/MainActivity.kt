@@ -180,14 +180,15 @@ class MainActivity : WryActivity() {
         @JvmStatic
         fun pickFile(): String? {
             val activity = instance ?: return null
-            return awaitActivityResult(activity,
+            val uri = awaitActivityResult(activity,
                 createIntent = {
                     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "*/*"
                     }
                 }
-            ) { data -> data?.data?.let { copyUriToCache(activity, it) } }
+            ) { data -> data?.data } ?: return null
+            return copyUriToCache(activity, uri)
         }
 
         @JvmStatic
