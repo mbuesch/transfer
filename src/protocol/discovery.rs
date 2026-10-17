@@ -83,7 +83,7 @@ pub async fn create_ipv6_listener_socket() -> ah::Result<UdpSocket> {
 }
 
 pub async fn broadcast_presence_ipv4(packet: &DiscoveryPacket) {
-    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
+    let data = match packet.serialize() {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
@@ -153,7 +153,7 @@ pub async fn broadcast_presence_ipv6(packet: &DiscoveryPacket) {
         }
     };
 
-    let data = match rkyv::to_bytes::<rkyv::rancor::Error>(packet) {
+    let data = match packet.serialize() {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to serialize discovery packet: {e}");
