@@ -785,21 +785,22 @@ pub async fn send_path(
             Ok(Ok(_)) => match verdict {
                 FINAL_OK => (),
                 FINAL_FAIL => {
-                    return Err(err!(
-                        "Receiver reported failure (checksum mismatch or extraction error)"
-                    ));
+                    return Err(err!("Receiver reported failure"));
                 }
                 _ => {
                     return Err(err!("Invalid final response from receiver"));
                 }
             },
             Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                //TODO: Make this a hard error in future.
                 log::debug!("Receiver closed without final verdict (legacy peer)");
             }
             Ok(Err(e)) => {
+                //TODO: Make this a hard error in future.
                 log::debug!("Final verdict read error (treated as legacy peer): {e}");
             }
             Err(_) => {
+                //TODO: Make this a hard error in future.
                 log::warn!("Timed out waiting for final verdict; assuming success");
             }
         }
