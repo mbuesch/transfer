@@ -141,10 +141,10 @@ impl Language {
     pub fn no_devices_hint(self) -> &'static str {
         match self {
             Language::En => {
-                "Make sure another instance of Transfer is running on the same network."
+                "Make sure Transfer is running another device on the same network."
             }
             Language::De => {
-                "Stelle sicher, dass eine weitere Transfer-Instanz im selben Netzwerk läuft."
+                "Stelle sicher, dass Datei-Transfer auf einem anderen Gerät im selben Netzwerk läuft."
             }
         }
     }
@@ -298,8 +298,8 @@ impl Language {
 
     pub fn auto_accept_folder_none(self) -> &'static str {
         match self {
-            Language::En => "Not set (accept manually)",
-            Language::De => "Nicht gesetzt (manuell annehmen)",
+            Language::En => "None",
+            Language::De => "Keiner",
         }
     }
 
