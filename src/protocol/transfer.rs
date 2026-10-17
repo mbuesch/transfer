@@ -65,7 +65,9 @@ fn create_temp_file() -> ah::Result<File> {
 /// Create a temporary directory.
 #[cfg(target_os = "android")]
 fn create_temp_dir() -> ah::Result<tempfile::TempDir> {
-    Ok(tempfile::tempdir_in(crate::android_interface::android_cache_dir()?)?)
+    Ok(tempfile::tempdir_in(
+        crate::android_interface::android_cache_dir()?,
+    )?)
 }
 
 /// Pack a file or directory into an anonymous temporary zip file.
