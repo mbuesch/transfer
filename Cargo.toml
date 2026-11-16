@@ -28,7 +28,7 @@ zip = "9"
 clap = { version = "4", features = [ "derive" ] }
 console-subscriber = "0.5"
 dioxus = { version = "0.7", default-features = false, features = [ "desktop", "signals", "hooks", "html", "launch", "macro" ] }
-rfd = "0.17"
+rfd = "0.18"
 
 [build-dependencies]
 anyhow = "1"
