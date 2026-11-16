@@ -4,7 +4,7 @@ description = "File transfer tool"
 license = "PD OR MIT OR Apache-2.0"
 version = "2.2.0"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 readme = "README.md"
 publish = false
 
